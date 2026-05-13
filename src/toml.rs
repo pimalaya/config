@@ -1,4 +1,4 @@
-use std::{fmt, fs, path::PathBuf};
+use std::{fmt, fs, io, path::Path, path::PathBuf};
 
 use anyhow::{bail, Context, Result};
 use dirs::{config_dir, home_dir};
@@ -73,18 +73,49 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
         }
     }
 
-    fn from_paths_or_default(paths: &[PathBuf]) -> Result<Self> {
-        match paths.len() {
-            0 => Self::from_default_paths(),
-            _ if paths[0].exists() => Self::from_paths(paths),
-            _ => bail!("Invalid TOML config file paths"),
+    /// Loads the configuration from `paths` if any are given, falling
+    /// back to the platform default path otherwise.
+    ///
+    /// Returns:
+    ///
+    /// - `Err` on parse errors or non-`NotFound` I/O errors (notably
+    ///   `PermissionDenied` — those should not be silently treated as
+    ///   "no config" because a brand-new wizard run could overwrite a
+    ///   pre-existing but unreadable file).
+    /// - `Ok(None)` when no config file is found (paths empty + no
+    ///   default exists, or an explicit path that does not exist on
+    ///   disk). Callers can use this signal to launch a wizard or
+    ///   bail with their own message.
+    /// - `Ok(Some(config))` on success.
+    fn from_paths_or_default(paths: &[PathBuf]) -> Result<Option<Self>> {
+        match paths.first() {
+            None => Self::from_default_paths(),
+            Some(path) => match path_status(path)? {
+                PathStatus::Missing => Ok(None),
+                PathStatus::Present => Self::from_paths(paths).map(Some),
+            },
         }
     }
 
-    fn from_default_paths() -> Result<Self> {
+    /// Loads the configuration from the first valid default path.
+    /// Returns `Ok(None)` if no default path exists.
+    fn from_default_paths() -> Result<Option<Self>> {
         match Self::first_valid_default_path() {
-            Some(path) => Self::from_paths(&[path]),
-            None => bail!("Invalid TOML config file paths"),
+            Some(path) => Self::from_paths(&[path]).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Returns the path a brand-new configuration should be written
+    /// to: the first explicit path if one was given, otherwise the
+    /// platform default. Used by callers to drive wizard targeting
+    /// after [`from_paths_or_default`] returns `Ok(None)`.
+    ///
+    /// [`from_paths_or_default`]: Self::from_paths_or_default
+    fn target_path(paths: &[PathBuf]) -> Result<PathBuf> {
+        match paths.first() {
+            Some(path) => Ok(path.clone()),
+            None => Self::default_path(),
         }
     }
 
@@ -118,6 +149,24 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
             .filter(|p| p.exists())
             .or_else(|| home_dir().map(|p| p.join(format!(".{project}rc"))))
             .filter(|p| p.exists())
+    }
+}
+
+/// Distinguishes "the file is not there" from "the file exists" so
+/// `from_paths_or_default` can map only the former to `Ok(None)` and
+/// surface every other I/O issue as `Err`.
+enum PathStatus {
+    Missing,
+    Present,
+}
+
+fn path_status(path: &Path) -> Result<PathStatus> {
+    match fs::metadata(path) {
+        Ok(_) => Ok(PathStatus::Present),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(PathStatus::Missing),
+        Err(err) => Err(err).with_context(|| {
+            format!("Stat TOML config file `{}` error", path.display())
+        }),
     }
 }
 
