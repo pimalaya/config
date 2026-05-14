@@ -69,18 +69,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "io-process"
-version = "0.0.2"
-source = "git+https://github.com/pimalaya/io-process#9c9b27311905b12b937e0c03a78feaf6a3c99c1a"
-dependencies = [
- "dirs",
- "log",
- "serde",
- "shellexpand",
- "thiserror",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -119,7 +107,6 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "dirs",
- "io-process",
  "log",
  "secrecy",
  "serde",

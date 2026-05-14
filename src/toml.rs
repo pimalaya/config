@@ -12,18 +12,15 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
 
     fn project_name() -> &'static str;
 
-    fn find_default_account(&self) -> Option<(String, Self::Account)>;
-    fn find_account(&self, name: &str) -> Option<(String, Self::Account)>;
+    fn take_default_account(&mut self) -> Option<(String, Self::Account)>;
+    fn take_named_account(&mut self, name: &str) -> Option<(String, Self::Account)>;
 
-    fn get_account(&self, account_name: Option<&str>) -> Result<(String, Self::Account)> {
-        match account_name {
-            Some("default") | Some("") | None => match self.find_default_account() {
-                Some(account) => Ok(account),
-                None => bail!("Get default account error"),
-            },
-            Some(name) => match self.find_account(name) {
-                Some(account) => Ok(account),
+    fn take_account(&mut self, name: Option<&str>) -> Result<Option<(String, Self::Account)>> {
+        match name {
+            Some("default") | Some("") | None => Ok(self.take_default_account()),
+            Some(name) => match self.take_named_account(name) {
                 None => bail!("Get account `{name}` error"),
+                account => Ok(account),
             },
         }
     }
@@ -164,9 +161,9 @@ fn path_status(path: &Path) -> Result<PathStatus> {
     match fs::metadata(path) {
         Ok(_) => Ok(PathStatus::Present),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(PathStatus::Missing),
-        Err(err) => Err(err).with_context(|| {
-            format!("Stat TOML config file `{}` error", path.display())
-        }),
+        Err(err) => {
+            Err(err).with_context(|| format!("Stat TOML config file `{}` error", path.display()))
+        }
     }
 }
 
