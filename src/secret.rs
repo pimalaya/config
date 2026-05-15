@@ -7,6 +7,16 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize, Serializer};
 use thiserror::Error;
 
+#[derive(Debug, Error)]
+pub enum SecretError {
+    #[error("Spawn secret command error")]
+    Spawn(#[source] io::Error),
+    #[error("Wait secret command error")]
+    Wait(#[source] io::Error),
+    #[error("Secret command error: {0}")]
+    Output(String),
+}
+
 /// A secret value sourced either from a literal in the TOML config
 /// or from a shell command's stdout.
 ///
@@ -20,33 +30,6 @@ pub enum Secret {
     Raw(#[serde(serialize_with = "de")] SecretString),
     #[serde(alias = "cmd", with = "crate::command")]
     Command(Command),
-}
-
-#[derive(Debug, Error)]
-pub enum SecretError {
-    #[error("Spawn secret command error")]
-    Spawn(#[source] io::Error),
-    #[error("Wait secret command error")]
-    Wait(#[source] io::Error),
-    #[error("Secret command error: {0}")]
-    Output(String),
-}
-
-pub fn de<S: Serializer>(secret: &SecretString, serializer: S) -> Result<S::Ok, S::Error> {
-    secret.expose_secret().serialize(serializer)
-}
-
-impl Clone for Secret {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Raw(secret) => Self::Raw(secret.clone()),
-            Self::Command(cmd) => {
-                let mut new = Command::new(cmd.get_program());
-                new.args(cmd.get_args());
-                Self::Command(new)
-            }
-        }
-    }
 }
 
 impl Secret {
@@ -77,4 +60,21 @@ impl Secret {
             }
         }
     }
+}
+
+impl Clone for Secret {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Raw(secret) => Self::Raw(secret.clone()),
+            Self::Command(cmd) => {
+                let mut new = Command::new(cmd.get_program());
+                new.args(cmd.get_args());
+                Self::Command(new)
+            }
+        }
+    }
+}
+
+pub fn de<S: Serializer>(secret: &SecretString, serializer: S) -> Result<S::Ok, S::Error> {
+    secret.expose_secret().serialize(serializer)
 }

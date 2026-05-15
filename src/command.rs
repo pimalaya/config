@@ -41,6 +41,7 @@ pub fn shell(line: &str) -> Command {
     } else {
         ("/bin/sh", "-c")
     };
+
     let mut cmd = Command::new(program);
     cmd.arg(flag).arg(line);
     cmd
@@ -58,9 +59,11 @@ pub fn serialize<S: Serializer>(cmd: &Command, serializer: S) -> Result<S::Ok, S
 
     let mut seq = serializer.serialize_seq(Some(args.len() + 1))?;
     seq.serialize_element(&cmd.get_program().to_string_lossy())?;
+
     for arg in &args {
         seq.serialize_element(arg)?;
     }
+
     seq.end()
 }
 
@@ -78,21 +81,25 @@ impl<'de> Visitor<'de> for CommandVisitor {
 
     fn visit_str<E: Error>(self, v: &str) -> Result<Self::Value, E> {
         let line = v.trim();
+
         if line.is_empty() {
             return Err(E::custom("command cannot be empty"));
         }
+
         Ok(shell(line))
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-        let program: String = seq
-            .next_element()?
-            .ok_or_else(|| <A::Error as Error>::custom("command cannot be empty"))?;
+        let Some(program) = seq.next_element::<String>()? else {
+            return Err(<A::Error as Error>::custom("command cannot be empty"));
+        };
 
         let mut cmd = Command::new(program);
+
         while let Some(arg) = seq.next_element::<String>()? {
             cmd.arg(arg);
         }
+
         Ok(cmd)
     }
 }

@@ -12,7 +12,7 @@ documentation = "https://docs.rs/pimalaya-config/latest/pimalaya_config"
 repository = "https://github.com/pimalaya/config"
 
 [features]
-default = ["toml", "secret"]
+default = []
 toml = ["dep:dirs", "dep:serde", "dep:serde-toml-merge", "dep:shellexpand", "dep:toml"]
 secret = ["dep:secrecy", "dep:serde", "dep:thiserror"]
 
