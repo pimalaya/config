@@ -189,3 +189,9 @@ pub fn shell_expanded_string<'de, D: Deserializer<'de>>(
 ) -> Result<String, D::Error> {
     deserializer.deserialize_string(ShellExpandedStringVisitor)
 }
+
+pub fn shell_expanded_path<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<PathBuf, D::Error> {
+    shell_expanded_string(deserializer).map(Into::into)
+}
