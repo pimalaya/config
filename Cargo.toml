@@ -3,8 +3,8 @@ name = "pimalaya-config"
 description = "Pimalaya configuration helpers (TOML loader and secret resolution)"
 version = "0.0.1"
 authors = ["soywod <clement.douin@posteo.net>"]
-rust-version = "1.56"
-edition = "2021"
+rust-version = "1.87"
+edition = "2024"
 license = "MIT"
 keywords = ["pimalaya", "config", "toml", "secret"]
 homepage = "https://pimalaya.org"
@@ -12,7 +12,7 @@ documentation = "https://docs.rs/pimalaya-config/latest/pimalaya_config"
 repository = "https://github.com/pimalaya/config"
 
 [features]
-default = []
+default = ["toml", "secret"]
 toml = ["dep:dirs", "dep:serde", "dep:serde-toml-merge", "dep:shellexpand", "dep:toml"]
 secret = ["dep:secrecy", "dep:serde", "dep:thiserror"]
 
