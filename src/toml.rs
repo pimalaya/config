@@ -1,9 +1,9 @@
 use std::{fmt, fs, io, path::Path, path::PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use dirs::{config_dir, home_dir};
 use log::debug;
-use serde::{de::Visitor, Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, de::Visitor};
 use serde_toml_merge::merge;
 use toml::Value;
 

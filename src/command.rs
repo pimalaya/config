@@ -17,17 +17,18 @@
 //! Empty inputs (empty string, blank string, empty array) are
 //! deserialization errors.
 //!
-//! Serialization always emits the sequence form. A command that was
-//! originally given as a string therefore round-trips as
-//! `["/bin/sh", "-c", "<string>"]` — equivalent semantically but
-//! more verbose in the file.
+//! Serialization mirrors the two shapes: a command built through the
+//! platform shell (see [`shell`]) is written back as the bare command
+//! line string it came from, and any other command is written as the
+//! program + args sequence. A string-form command therefore round-trips
+//! as the same string rather than the verbose `["/bin/sh", "-c", ...]`.
 
 use std::{fmt, process::Command};
 
 use serde::{
+    Deserializer, Serializer,
     de::{Error, SeqAccess, Visitor},
     ser::SerializeSeq,
-    Deserializer, Serializer,
 };
 
 /// Builds a [`Command`] that runs `line` through the platform shell:
@@ -52,19 +53,43 @@ pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Command
 }
 
 pub fn serialize<S: Serializer>(cmd: &Command, serializer: S) -> Result<S::Ok, S::Error> {
-    let args: Vec<_> = cmd
+    let program = cmd.get_program().to_string_lossy();
+    let args: Vec<String> = cmd
         .get_args()
-        .map(|a| a.to_string_lossy().into_owned())
+        .map(|arg| arg.to_string_lossy().into_owned())
         .collect();
 
+    // A command produced by `shell` round-trips as its bare command
+    // line: the deserializer wraps it back through the platform shell on
+    // load, so emit the string form rather than the verbose sequence.
+    if let Some(line) = shell_line(&program, &args) {
+        return serializer.serialize_str(line);
+    }
+
     let mut seq = serializer.serialize_seq(Some(args.len() + 1))?;
-    seq.serialize_element(&cmd.get_program().to_string_lossy())?;
+    seq.serialize_element(&program)?;
 
     for arg in &args {
         seq.serialize_element(arg)?;
     }
 
     seq.end()
+}
+
+/// Returns the bare command line when `program`/`args` are exactly what
+/// [`shell`] produces on the current platform (`/bin/sh -c <line>` on
+/// Unix, `cmd /C <line>` on Windows).
+fn shell_line<'a>(program: &str, args: &'a [String]) -> Option<&'a str> {
+    let (shell_program, shell_flag) = if cfg!(windows) {
+        ("cmd", "/C")
+    } else {
+        ("/bin/sh", "-c")
+    };
+
+    match args {
+        [flag, line] if program == shell_program && flag.as_str() == shell_flag => Some(line),
+        _ => None,
+    }
 }
 
 struct CommandVisitor;
@@ -164,5 +189,29 @@ mod tests {
             de_seq(v).unwrap_err().to_string(),
             "command cannot be empty"
         );
+    }
+
+    #[derive(serde::Serialize)]
+    struct Wrap {
+        #[serde(serialize_with = "super::serialize")]
+        cmd: Command,
+    }
+
+    #[test]
+    fn serialize_shell_command_as_string() {
+        let out = toml::to_string(&Wrap {
+            cmd: super::shell("pass show foo"),
+        })
+        .unwrap();
+        assert_eq!(out.trim(), r#"cmd = "pass show foo""#);
+    }
+
+    #[test]
+    fn serialize_seq_command_as_sequence() {
+        let out = toml::to_string(&Wrap {
+            cmd: de_seq(["pass", "show", "foo"]).unwrap(),
+        })
+        .unwrap();
+        assert_eq!(out.trim(), r#"cmd = ["pass", "show", "foo"]"#);
     }
 }
