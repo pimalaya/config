@@ -16,7 +16,6 @@ use anyhow::{Context, Result, bail};
 use dirs::{config_dir, home_dir};
 use log::debug;
 use serde::{Deserialize, Deserializer, de::Visitor};
-use serde_toml_merge::merge;
 use toml::Value;
 
 /// A deserializable TOML configuration exposing named accounts.
@@ -69,28 +68,22 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
                 toml::from_str(&content).context("Parse TOML config error")
             }
             _ => {
-                let path = &paths[0];
-
-                let mut merged_content = fs::read_to_string(path)
-                    .context("Read TOML config file error")?
-                    .parse::<Value>()
-                    .context("Parse TOML config error")?;
+                let base = fs::read_to_string(&paths[0]).context("Read TOML config file error")?;
+                let mut merged_content: Value =
+                    toml::from_str(&base).context("Parse TOML config error")?;
 
                 for path in &paths[1..] {
-                    let content = fs::read_to_string(path);
-
-                    let content = match content {
-                        Ok(content) => content.parse().context("Parse TOML config error")?,
+                    let content = match fs::read_to_string(path) {
+                        Ok(content) => content,
                         Err(err) => {
                             debug!("skip invalid subconfig at {}: {err}", path.display());
                             continue;
                         }
                     };
 
-                    match merge(merged_content, content) {
-                        Ok(content) => merged_content = content,
-                        Err(err) => bail!("Merge TOML subconfigs error: {err}"),
-                    }
+                    let content: Value =
+                        toml::from_str(&content).context("Parse TOML config error")?;
+                    merged_content = merge_toml(merged_content, content, "$")?;
                 }
 
                 merged_content.try_into().context("Parse TOML config error")
@@ -177,6 +170,39 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
     }
 }
 
+/// Deep-merges the `other` TOML value into `base`, at the given dotted
+/// `path` for error reporting.
+///
+/// `other` wins on scalars, tables are merged recursively and arrays
+/// are concatenated; incompatible types on the two sides are an error.
+/// Replaces the serde-toml-merge dependency, which does not follow toml
+/// past 0.9.
+fn merge_toml(base: Value, other: Value, path: &str) -> Result<Value> {
+    match (base, other) {
+        (Value::Table(mut base), Value::Table(other)) => {
+            for (key, other) in other {
+                let merged = match base.remove(&key) {
+                    Some(base) => merge_toml(base, other, &format!("{path}.{key}"))?,
+                    None => other,
+                };
+                base.insert(key, merged);
+            }
+            Ok(Value::Table(base))
+        }
+        (Value::Array(mut base), Value::Array(other)) => {
+            base.extend(other);
+            Ok(Value::Array(base))
+        }
+        (base, other) if base.same_type(&other) => Ok(other),
+        (base, other) => bail!(
+            "Merge TOML subconfigs error: incompatible types at `{path}`, \
+             base is {}, override is {}",
+            base.type_str(),
+            other.type_str(),
+        ),
+    }
+}
+
 /// Distinguishes "the file is not there" from "the file exists" so
 /// `from_paths_or_default` can map only the former to `Ok(None)` and
 /// surface every other I/O issue as `Err`.
@@ -230,4 +256,41 @@ pub fn shell_expanded_path<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<PathBuf, D::Error> {
     shell_expanded_string(deserializer).map(Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use toml::Value;
+
+    fn doc(s: &str) -> Value {
+        toml::from_str(s).unwrap()
+    }
+
+    fn merge(base: &str, other: &str) -> Result<Value, String> {
+        super::merge_toml(doc(base), doc(other), "$").map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn scalars_override_and_missing_keys_are_added() {
+        let got = merge("a = 1\nkeep = true\n", "a = 2\nadded = \"x\"\n").unwrap();
+        assert_eq!(got, doc("a = 2\nkeep = true\nadded = \"x\"\n"));
+    }
+
+    #[test]
+    fn arrays_are_concatenated() {
+        let got = merge("xs = [1, 2]\n", "xs = [3]\n").unwrap();
+        assert_eq!(got, doc("xs = [1, 2, 3]\n"));
+    }
+
+    #[test]
+    fn tables_are_merged_recursively() {
+        let got = merge("[t]\na = 1\nb = 2\n", "[t]\nb = 3\nc = 4\n").unwrap();
+        assert_eq!(got, doc("[t]\na = 1\nb = 3\nc = 4\n"));
+    }
+
+    #[test]
+    fn incompatible_types_are_an_error() {
+        let err = merge("a = 1\n", "a = \"x\"\n").unwrap_err();
+        assert!(err.contains("incompatible types at `$.a`"), "{err}");
+    }
 }

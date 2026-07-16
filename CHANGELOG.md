@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Migrated from toml 0.8 to toml 1.1. The `toml` feature now enables toml's own `serde` feature explicitly, which 1.x split out of its default set; parsing, `Value` handling and serialization are otherwise unchanged.
+- Dropped the `serde-toml-merge` dependency, inlining an equivalent deep-merge (scalars override, arrays concatenate, tables merge recursively, incompatible types error): the crate does not follow toml past 0.9, so it could not move to toml 1.x.
 - Relicensed under `MIT OR Apache-2.0`, adding the Apache-2.0 option next to the existing MIT license.
 - Gated the `anyhow` and `log` dependencies behind the `toml` feature, the only layer using them, so a `secret`-only build no longer pulls them in.
 

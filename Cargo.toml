@@ -18,7 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["toml", "secret"]
-toml = ["dep:anyhow", "dep:dirs", "dep:log", "dep:serde", "dep:serde-toml-merge", "dep:shellexpand", "dep:toml"]
+toml = ["dep:anyhow", "dep:dirs", "dep:log", "dep:serde", "dep:shellexpand", "dep:toml"]
 secret = ["dep:secrecy", "dep:serde", "dep:thiserror"]
 
 [dependencies]
@@ -27,7 +27,6 @@ dirs = { version = "6.0", default-features = false, optional = true }
 log = { version = "0.4", default-features = false, optional = true }
 secrecy = { version = "0.10", default-features = false, features = ["serde"], optional = true }
 serde = { version = "1", default-features = false, features = ["derive", "std"], optional = true }
-serde-toml-merge = { version = "=0.3.9", default-features = false, optional = true }
 shellexpand = { version = "3.1", default-features = false, features = ["base-0", "tilde"], optional = true }
 thiserror = { version = "2", default-features = false, features = ["std"], optional = true }
-toml = { version = "0.8", default-features = false, features = ["parse", "display"], optional = true }
+toml = { version = "1.1", default-features = false, features = ["std", "parse", "display", "serde"], optional = true }
