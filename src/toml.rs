@@ -1,4 +1,16 @@
-use std::{fmt, fs, io, path::Path, path::PathBuf};
+//! TOML configuration loading, merging and shell expansion.
+//!
+//! [`TomlConfig`] is the loader trait: it reads a project's TOML config
+//! from explicit paths or the platform default locations, deep-merges
+//! several files into one, and maps a missing file to `Ok(None)` so
+//! callers can launch a wizard. The [`shell_expanded_string`] and
+//! [`shell_expanded_path`] deserializers expand environment variables
+//! in string and path config fields.
+
+use std::{
+    fmt, fs, io,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, bail};
 use dirs::{config_dir, home_dir};
@@ -7,14 +19,31 @@ use serde::{Deserialize, Deserializer, de::Visitor};
 use serde_toml_merge::merge;
 use toml::Value;
 
+/// A deserializable TOML configuration exposing named accounts.
+///
+/// Consumers implement it on their own config type to inherit the
+/// loading, deep-merging and default-path resolution provided by the
+/// default methods; only the project name and the account accessors are
+/// left to the implementor.
 pub trait TomlConfig: for<'de> Deserialize<'de> {
+    /// The per-account configuration this config holds.
     type Account;
 
+    /// The project name, used to build the default config paths
+    /// (`<project>/config.toml`, `.<project>rc`).
     fn project_name() -> &'static str;
 
+    /// Takes the account marked as default, if any.
     fn take_default_account(&mut self) -> Option<(String, Self::Account)>;
+
+    /// Takes the account registered under `name`, if any.
     fn take_named_account(&mut self, name: &str) -> Option<(String, Self::Account)>;
 
+    /// Takes the default account when `name` is empty, `"default"` or
+    /// absent, the named account otherwise.
+    ///
+    /// Returns an error when a name is given but no matching account
+    /// exists.
     fn take_account(&mut self, name: Option<&str>) -> Result<Option<(String, Self::Account)>> {
         match name {
             Some("default") | Some("") | None => Ok(self.take_default_account()),
@@ -36,9 +65,8 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
             }
             1 => {
                 let path = &paths[0];
-                let ref content =
-                    fs::read_to_string(path).context("Read TOML config file error")?;
-                toml::from_str(content).context("Parse TOML config error")
+                let content = fs::read_to_string(path).context("Read TOML config file error")?;
+                toml::from_str(&content).context("Parse TOML config error")
             }
             _ => {
                 let path = &paths[0];
@@ -76,7 +104,7 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
     /// Returns:
     ///
     /// - `Err` on parse errors or non-`NotFound` I/O errors (notably
-    ///   `PermissionDenied` — those should not be silently treated as
+    ///   `PermissionDenied`: those should not be silently treated as
     ///   "no config" because a brand-new wizard run could overwrite a
     ///   pre-existing but unreadable file).
     /// - `Ok(None)` when no config file is found (paths empty + no
@@ -173,23 +201,31 @@ impl<'de> Visitor<'de> for ShellExpandedStringVisitor {
     type Value = String;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("an string containing environment variable(s)")
+        formatter.write_str("a string containing environment variable(s)")
     }
 
-    fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Self::Value, E> {
-        match shellexpand::full(&v) {
-            Ok(v) => Ok(v.to_string()),
-            Err(_) => Ok(v),
+    fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+        match shellexpand::full(v) {
+            Ok(v) => Ok(v.into_owned()),
+            Err(_) => Ok(v.to_owned()),
         }
     }
 }
 
+/// Deserializes a string field, expanding environment variables and
+/// the leading tilde in it.
+///
+/// Use via `#[serde(deserialize_with = "...")]`. Expansion failures
+/// (an undefined variable) leave the raw value untouched rather than
+/// erroring.
 pub fn shell_expanded_string<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<String, D::Error> {
     deserializer.deserialize_string(ShellExpandedStringVisitor)
 }
 
+/// Deserializes a path field, expanding environment variables and the
+/// leading tilde in it, as [`shell_expanded_string`] does for strings.
 pub fn shell_expanded_path<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<PathBuf, D::Error> {

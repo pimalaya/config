@@ -5,11 +5,11 @@
 //!
 //! Two TOML shapes are accepted:
 //!
-//! - **String** — `cmd = "pass show foo"`. The whole string is
+//! - **String**: `cmd = "pass show foo"`. The whole string is
 //!   handed to the platform shell: `/bin/sh -c "<string>"` on Unix,
 //!   `cmd /C "<string>"` on Windows. Use this when you want pipes,
 //!   glob expansion, env substitution, etc.
-//! - **Sequence of strings** — `cmd = ["pass", "show", "foo"]`.
+//! - **Sequence of strings**: `cmd = ["pass", "show", "foo"]`.
 //!   First element is the program, the rest are its arguments. No
 //!   shell is involved, so quoting/whitespace rules are the kernel
 //!   exec rules.
@@ -48,10 +48,16 @@ pub fn shell(line: &str) -> Command {
     cmd
 }
 
+/// Deserializes a [`Command`] from a shell line string or a
+/// program-plus-arguments list. See the module docs for the accepted
+/// TOML shapes.
 pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Command, D::Error> {
     deserializer.deserialize_any(CommandVisitor)
 }
 
+/// Serializes a [`Command`] back to the shape it came from: a bare
+/// command line for shell-form commands (see [`shell`]), a
+/// program-plus-arguments sequence otherwise.
 pub fn serialize<S: Serializer>(cmd: &Command, serializer: S) -> Result<S::Ok, S::Error> {
     let program = cmd.get_program().to_string_lossy();
     let args: Vec<String> = cmd
