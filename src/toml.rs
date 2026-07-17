@@ -3,19 +3,22 @@
 //! [`TomlConfig`] is the loader trait: it reads a project's TOML config
 //! from explicit paths or the platform default locations, deep-merges
 //! several files into one, and maps a missing file to `Ok(None)` so
-//! callers can launch a wizard. The [`shell_expanded_string`] and
-//! [`shell_expanded_path`] deserializers expand environment variables
-//! in string and path config fields.
+//! callers can launch a wizard. [`to_string`] is the matching serializer,
+//! emitting a compact document a wizard can print. The
+//! [`shell_expanded_string`] and [`shell_expanded_path`] deserializers
+//! expand environment variables in string and path config fields.
 
 use std::{
-    fmt, fs, io,
+    borrow::Cow,
+    fmt::{self, Write as _},
+    fs, io,
     path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result, bail};
 use dirs::{config_dir, home_dir};
 use log::debug;
-use serde::{Deserialize, Deserializer, de::Visitor};
+use serde::{Deserialize, Deserializer, Serialize, de::Visitor};
 use toml::Value;
 
 /// A deserializable TOML configuration exposing named accounts.
@@ -170,6 +173,88 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
     }
 }
 
+/// Serializes a config value to a compact TOML document tuned for a
+/// wizard's output: the per-account tables (`[accounts.<name>]`) are the
+/// only table headers, and every nested table is flattened into dotted
+/// keys (`imap.sasl.plain.username = …`) rather than sub-headers or
+/// inline `{ … }` tables. Arrays and scalars render on one line
+/// (`imap.alpn = ["imap"]`). Empty tables produce nothing.
+///
+/// The `accounts` convention is shared by every Pimalaya CLI, so the
+/// only headers are the account entries; a value carrying no `accounts`
+/// table comes out as a flat list of dotted keys.
+pub fn to_string<T: Serialize>(value: &T) -> Result<String> {
+    let value = Value::try_from(value).context("Serialize TOML value error")?;
+
+    let Value::Table(root) = &value else {
+        return Ok(value.to_string());
+    };
+
+    let mut out = String::new();
+
+    // Root entries other than the accounts render as dotted keys up top.
+    for (key, item) in root.iter() {
+        if key == "accounts" {
+            continue;
+        }
+
+        emit(&mut out, bare_or_quoted(key).as_ref(), item);
+    }
+
+    // Each account becomes an `[accounts.<name>]` header, the only table
+    // header in the output; its fields render as dotted keys below it.
+    if let Some(Value::Table(accounts)) = root.get("accounts") {
+        for (name, account) in accounts.iter() {
+            if !out.is_empty() {
+                let _ = writeln!(out);
+            }
+
+            let _ = writeln!(out, "[accounts.{}]", bare_or_quoted(name));
+
+            if let Value::Table(fields) = account {
+                for (key, item) in fields.iter() {
+                    emit(&mut out, bare_or_quoted(key).as_ref(), item);
+                }
+            }
+        }
+    }
+
+    Ok(out)
+}
+
+/// Writes a config entry rooted at `key`: a nested table is flattened
+/// into dotted keys (recursing so `a.b.c = …`), while a scalar or array
+/// renders on a single line through the inline `Display` of
+/// [`toml::Value`]. An empty table writes nothing.
+fn emit(out: &mut String, key: &str, item: &Value) {
+    match item {
+        Value::Table(table) => {
+            for (sub_key, sub_item) in table.iter() {
+                let dotted = format!("{key}.{}", bare_or_quoted(sub_key));
+                emit(out, &dotted, sub_item);
+            }
+        }
+        value => {
+            let _ = writeln!(out, "{key} = {value}");
+        }
+    }
+}
+
+/// Renders a table key bare when it is a valid TOML bare key (ASCII
+/// alphanumerics, `-` and `_`), quoting it as a basic string otherwise.
+fn bare_or_quoted(key: &str) -> Cow<'_, str> {
+    let bare = !key.is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+
+    if bare {
+        Cow::Borrowed(key)
+    } else {
+        Cow::Owned(format!("{key:?}"))
+    }
+}
+
 /// Deep-merges the `other` TOML value into `base`, at the given dotted
 /// `path` for error reporting.
 ///
@@ -268,6 +353,33 @@ mod tests {
 
     fn merge(base: &str, other: &str) -> Result<Value, String> {
         super::merge_toml(doc(base), doc(other), "$").map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn to_string_keeps_only_account_headers_and_dots_the_rest() {
+        let value = doc("[table]\n\
+             [accounts.work]\n\
+             default = true\n\
+             [accounts.work.imap]\n\
+             server = \"x\"\n\
+             alpn = [\"imap\"]\n\
+             [accounts.work.imap.sort]\n");
+
+        let got = super::to_string(&value).unwrap();
+
+        // Empty `[table]` and `[…sort]` produce nothing; `imap` is
+        // flattened into dotted keys; only the account is a header.
+        assert_eq!(
+            got,
+            "[accounts.work]\ndefault = true\nimap.alpn = [\"imap\"]\nimap.server = \"x\"\n",
+        );
+    }
+
+    #[test]
+    fn to_string_quotes_non_bare_account_names() {
+        let value = doc("[accounts.\"work mail\"]\ndefault = true\n");
+        let got = super::to_string(&value).unwrap();
+        assert_eq!(got, "[accounts.\"work mail\"]\ndefault = true\n");
     }
 
     #[test]
