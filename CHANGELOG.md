@@ -7,9 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-25
+
 ### Added
 
-- Added `toml::to_string`, a serializer for wizard output: it keeps the per-account tables (`[accounts.<name>]`) as the only table headers, flattens every other table into dotted keys (`imap.sasl.plain.username = …`), and drops empty tables.
+- Added `toml::to_string`, a TOML serializer tuned for wizard output.
+
+  It keeps the per-account tables (`[accounts.<name>]`) as the only table headers, flattens every other table into dotted keys (`imap.sasl.plain.username = …`), and drops empty tables.
 
 ## [0.1.0] - 2026-07-16
 
@@ -41,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the `command` serde adapter reading a `std::process::Command` from a shell line string or a program-plus-arguments list.
 - Added the `shell_expanded_string` and `shell_expanded_path` deserializers expanding environment variables in string and path config fields.
 
+[unreleased]: https://github.com/pimalaya/config/compare/v0.1.1..HEAD
+[0.1.1]: https://github.com/pimalaya/config/compare/v0.1.0..v0.1.1
 [0.1.0]: https://github.com/pimalaya/config/compare/v0.0.2..v0.1.0
 [0.0.2]: https://github.com/pimalaya/config/compare/v0.0.1..v0.0.2
 [0.0.1]: https://github.com/pimalaya/config/compare/root...v0.0.1
