@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Raised the minimum supported Rust version from 1.87 to 1.88.
+
+  The `notify` feature reaches `time` through notify-rust's macOS backend, and the release fixing RUSTSEC-2026-0009 (a denial of service parsing hostile RFC 2822 input) needs 1.88. Every Pimalaya binary consuming this crate already requires 1.88 or more, sirup excepted.
+
 - Compiled the `notify` module unconditionally, so a consumer names `notify::Notification` and shows one with no `#[cfg]` of its own.
 
   With the `notify` feature, that type is notify-rust's own and its `show` reaches the daemon. Without it, the type holds nothing, and reading one from a configuration, writing one back and showing one all fail with the same message, naming the `notify` cargo feature to rebuild with. A configuration naming a notification a build cannot send is refused as it loads, pointing at the offending table.
