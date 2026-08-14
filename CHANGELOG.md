@@ -7,13 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.3] - 2026-08-14
+## [0.1.4] - 2026-08-14
 
 ### Changed
 
-- Raised the minimum supported Rust version from 1.87 to 1.88.
+- Raised the minimum supported Rust version from 1.87 to 1.89.
 
-  The `notify` feature reaches `time` through notify-rust's macOS backend, and the release fixing RUSTSEC-2026-0009 (a denial of service parsing hostile RFC 2822 input) needs 1.88. Every Pimalaya binary consuming this crate already requires 1.88 or more, sirup excepted.
+  The `notify` feature reaches `time` through notify-rust's macOS backend, and the release fixing RUSTSEC-2026-0009, a denial of service parsing hostile RFC 2822 input, needs 1.88. The crate settles on 1.89, the version the newest Pimalaya binaries already require.
+
+## [0.1.3] - 2026-08-14
+
+### Changed
 
 - Compiled the `notify` module unconditionally, so a consumer names `notify::Notification` and shows one with no `#[cfg]` of its own.
 
@@ -69,7 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the `command` serde adapter reading a `std::process::Command` from a shell line string or a program-plus-arguments list.
 - Added the `shell_expanded_string` and `shell_expanded_path` deserializers expanding environment variables in string and path config fields.
 
-[unreleased]: https://github.com/pimalaya/config/compare/v0.1.3..HEAD
+[unreleased]: https://github.com/pimalaya/config/compare/v0.1.4..HEAD
+[0.1.4]: https://github.com/pimalaya/config/compare/v0.1.3..v0.1.4
 [0.1.3]: https://github.com/pimalaya/config/compare/v0.1.2..v0.1.3
 [0.1.2]: https://github.com/pimalaya/config/compare/v0.1.1..v0.1.2
 [0.1.1]: https://github.com/pimalaya/config/compare/v0.1.0..v0.1.1
