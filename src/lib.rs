@@ -30,11 +30,13 @@
 //! reading a [`std::process::Command`] from a shell line string or a
 //! program-plus-arguments list and writing either shape back unchanged.
 //!
-//! [`notify`] (`notify` feature) is its counterpart for
-//! desktop notifications, reading a [`notify_rust::Notification`] from
-//! a summary and a body. Both adapters hand back a ready-to-use value
-//! of a foreign type and perform no I/O: this crate builds the process
-//! and the notification, the caller runs and shows them.
+//! [`notify`] is its counterpart for desktop notifications, reading a
+//! [`Notification`] from a summary and a body. It is always compiled,
+//! so a consumer names that type and shows one with no `#[cfg]` of its
+//! own: what the `notify` feature decides is whether anything is behind
+//! it. With it, the type is notify-rust's own; without it, it holds
+//! nothing, and reading or showing one fails naming the cargo feature
+//! to rebuild with.
 //!
 //! ## Conventions
 //!
@@ -51,10 +53,10 @@
 //! [`shell_expanded_string`]: toml::shell_expanded_string
 //! [`shell_expanded_path`]: toml::shell_expanded_path
 //! [`Secret`]: secret::Secret
+//! [`Notification`]: notify::Notification
 
 #[cfg(feature = "secret")]
 pub mod command;
-#[cfg(feature = "notify")]
 pub mod notify;
 #[cfg(feature = "secret")]
 pub mod secret;

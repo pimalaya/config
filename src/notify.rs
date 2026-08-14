@@ -1,8 +1,7 @@
 //! Serde adapter for [`notify_rust::Notification`].
 //!
-//! Use via `#[serde(with = "pimalaya_config::notify")]` on a
-//! field (or enum-variant payload) of type
-//! [`notify_rust::Notification`].
+//! Use via `#[serde(with = "pimalaya_config::notify")]` on a field (or
+//! enum-variant payload) of type [`Notification`].
 //!
 //! One TOML shape is accepted, a table carrying the two fields every
 //! notification daemon renders:
@@ -15,13 +14,8 @@
 //! without one has nothing to show. The body is optional and defaults
 //! to empty. Serialization mirrors the shape, and omits an empty body.
 //!
-//! What comes out is a ready-to-show notification, exactly as
-//! [`command`](crate::command) yields a ready-to-run process: this
-//! crate builds it and never shows it, leaving the daemon call, and the
-//! decision of when to make it, to the caller.
-//!
 //! ```rust,no_run
-//! use notify_rust::Notification;
+//! use pimalaya_config::notify::Notification;
 //! use serde::Deserialize;
 //!
 //! #[derive(Deserialize)]
@@ -34,70 +28,126 @@
 //! hook.notify.show().unwrap();
 //! ```
 //!
-//! A template belongs to the caller too: a summary carrying variables
-//! is expanded before the notification is shown, since which variables
-//! exist is the caller's business, not this crate's.
+//! What comes out is a ready-to-show notification, exactly as
+//! [`command`](crate::command) yields a ready-to-run process: this
+//! crate builds it and never shows it, leaving the daemon call, and the
+//! decision of when to make it, to the caller. A template belongs to
+//! the caller too, since which variables exist is its business.
+//!
+//! ## What the `notify` feature decides
+//!
+//! The module is always compiled, so a consumer names [`Notification`]
+//! and shows one whatever the build, with no `#[cfg]` of its own. What
+//! the feature decides is whether anything is behind them: without it,
+//! [`Notification`] holds nothing, reading one from a configuration
+//! fails, and showing one fails the same way, all of them naming the
+//! cargo feature to rebuild with.
 
-use notify_rust::Notification as NativeNotification;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
+#[cfg(not(feature = "notify"))]
+use serde::ser::Error as _;
+#[cfg(feature = "notify")]
+use serde::{Deserialize, Serialize};
+use serde::{Deserializer, Serializer, de::Error as _};
 
-/// Deserializes a [`NativeNotification`] from a summary and a body. See
-/// the module docs for the accepted TOML shape.
-pub fn deserialize<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<NativeNotification, D::Error> {
-    let notification = Notification::deserialize(deserializer)?;
+/// A desktop notification, as notify-rust holds it.
+#[cfg(feature = "notify")]
+pub type Notification = notify_rust::Notification;
 
-    if notification.summary.trim().is_empty() {
-        return Err(Error::custom("notification summary is empty"));
+/// The notification a build without the `notify` cargo feature cannot
+/// have.
+///
+/// It carries nothing, since nothing can be done with it: reading one
+/// from a configuration fails, and so does showing one.
+#[cfg(not(feature = "notify"))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Notification;
+
+#[cfg(not(feature = "notify"))]
+impl Notification {
+    /// Reports that this build has no notification backend, where
+    /// notify-rust's own `show` would reach the daemon.
+    pub fn show(&self) -> Result<(), &'static str> {
+        Err(MISSING_FEATURE)
     }
-
-    // NOTE: the native type is non-exhaustive, so it is built through
-    // its setters rather than from a literal.
-    let mut native = NativeNotification::new();
-    native
-        .summary(&notification.summary)
-        .body(&notification.body);
-
-    Ok(native)
 }
 
-/// Serializes a [`NativeNotification`] back to the shape it came from,
+/// What every path says when the `notify` cargo feature is missing.
+#[cfg(not(feature = "notify"))]
+const MISSING_FEATURE: &str = "Missing `notify` cargo feature";
+
+/// Deserializes a [`Notification`] from a summary and a body. See the
+/// module docs for the accepted TOML shape.
+#[cfg(feature = "notify")]
+pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Notification, D::Error> {
+    let fields = NotificationFields::deserialize(deserializer)?;
+
+    if fields.summary.trim().is_empty() {
+        return Err(D::Error::custom("notification summary is empty"));
+    }
+
+    // NOTE: the type is non-exhaustive, so it is built through its
+    // setters rather than from a literal.
+    let mut notification = Notification::new();
+    notification.summary(&fields.summary).body(&fields.body);
+
+    Ok(notification)
+}
+
+/// Refuses the notification, this build having no backend to show it
+/// with.
+#[cfg(not(feature = "notify"))]
+pub fn deserialize<'de, D: Deserializer<'de>>(_: D) -> Result<Notification, D::Error> {
+    Err(D::Error::custom(MISSING_FEATURE))
+}
+
+/// Serializes a [`Notification`] back to the shape it came from,
 /// dropping an empty body.
+#[cfg(feature = "notify")]
 pub fn serialize<S: Serializer>(
-    native: &NativeNotification,
+    notification: &Notification,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
-    Notification {
-        summary: native.summary.clone(),
-        body: native.body.clone(),
+    NotificationFields {
+        summary: notification.summary.clone(),
+        body: notification.body.clone(),
     }
     .serialize(serializer)
 }
 
-/// A notification as a configuration writes it, which is the portable
-/// subset of what [`NativeNotification`] carries: everything else in it
-/// is either platform-specific (the hints) or better left to the caller
-/// (the appname, taken from the running binary).
+/// Refuses to write a notification this build could never have read.
+#[cfg(not(feature = "notify"))]
+pub fn serialize<S: Serializer>(_: &Notification, _: S) -> Result<S::Ok, S::Error> {
+    Err(S::Error::custom(MISSING_FEATURE))
+}
+
+/// The fields a configuration writes, which is the portable subset of
+/// what a notification carries: everything else is either
+/// platform-specific (the hints) or better left to the caller (the
+/// appname, taken from the running binary).
+#[cfg(feature = "notify")]
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-struct Notification {
+struct NotificationFields {
     summary: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     body: String,
 }
 
-#[cfg(test)]
+// NOTE: the shapes under test are TOML ones, so the tests need the
+// crate the `toml` feature pulls to write them.
+#[cfg(all(test, feature = "toml"))]
 mod tests {
-    use notify_rust::Notification as NativeNotification;
     use serde::{Deserialize, Serialize};
 
-    #[derive(Deserialize, Serialize)]
+    use crate::notify::Notification;
+
+    #[derive(Debug, Deserialize, Serialize)]
     struct Hook {
         #[serde(with = "crate::notify")]
-        notify: NativeNotification,
+        notify: Notification,
     }
 
+    #[cfg(feature = "notify")]
     #[test]
     fn a_summary_and_a_body_round_trip() {
         let hook: Hook =
@@ -114,6 +164,7 @@ mod tests {
         assert_eq!(hook.notify.body, "Work started!");
     }
 
+    #[cfg(feature = "notify")]
     #[test]
     fn a_body_is_optional_and_never_written_empty() {
         let hook: Hook = toml::from_str(r#"notify = { summary = "Comodoro" }"#)
@@ -127,6 +178,7 @@ mod tests {
         assert!(!toml.contains("body"));
     }
 
+    #[cfg(feature = "notify")]
     #[test]
     fn a_notification_with_nothing_to_show_is_refused() {
         // A blank summary renders as an empty notification bubble, which
@@ -137,5 +189,18 @@ mod tests {
 
         // A typo is caught rather than silently dropped.
         assert!(toml::from_str::<Hook>(r#"notify = { summary = "s", tittle = "t" }"#).is_err());
+    }
+
+    #[cfg(not(feature = "notify"))]
+    #[test]
+    fn a_build_without_the_feature_names_the_missing_one() {
+        const MESSAGE: &str =
+            "Missing `notify` cargo feature, rebuild with it to send notifications";
+
+        let err = toml::from_str::<Hook>(r#"notify = { summary = "Comodoro" }"#)
+            .expect_err("a notification cannot be read without a backend");
+
+        assert!(err.to_string().contains(MESSAGE), "{err}");
+        assert_eq!(Notification.show().unwrap_err(), MESSAGE);
     }
 }

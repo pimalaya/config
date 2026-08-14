@@ -1,7 +1,7 @@
 [package]
 name = "pimalaya-config"
 description = "Config utils for Pimalaya"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["soywod <pimalaya.org@posteo.net>"]
 rust-version = "1.87"
 edition = "2024"
@@ -18,9 +18,9 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["toml", "secret", "notify"]
-notify = ["dep:notify-rust", "dep:serde", "notify-rust/d"]
-secret = ["dep:secrecy", "dep:serde", "dep:thiserror"]
-toml = ["dep:anyhow", "dep:dirs", "dep:log", "dep:serde", "dep:shellexpand", "dep:toml"]
+notify = ["dep:notify-rust", "notify-rust/d"]
+secret = ["dep:secrecy", "dep:thiserror"]
+toml = ["dep:anyhow", "dep:dirs", "dep:log", "dep:shellexpand", "dep:toml"]
 vendored = ["notify-rust?/d_vendored"]
 
 [dependencies]
@@ -29,7 +29,7 @@ dirs = { version = "6.0", default-features = false, optional = true }
 log = { version = "0.4", default-features = false, optional = true }
 notify-rust = { version = "4", default-features = false, optional = true }
 secrecy = { version = "0.10", default-features = false, features = ["serde"], optional = true }
-serde = { version = "1", default-features = false, features = ["derive", "std"], optional = true }
+serde = { version = "1", default-features = false, features = ["derive", "std"] }
 shellexpand = { version = "3.1", default-features = false, features = ["base-0", "tilde"], optional = true }
 thiserror = { version = "2", default-features = false, features = ["std"], optional = true }
 toml = { version = "1.1", default-features = false, features = ["std", "parse", "display", "serde"], optional = true }

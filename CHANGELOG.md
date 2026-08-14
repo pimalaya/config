@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-08-14
+
+### Changed
+
+- Compiled the `notify` module unconditionally, so a consumer names `notify::Notification` and shows one with no `#[cfg]` of its own.
+
+  With the `notify` feature, that type is notify-rust's own and its `show` reaches the daemon. Without it, the type holds nothing, and reading one from a configuration, writing one back and showing one all fail with the same message, naming the `notify` cargo feature to rebuild with. A configuration naming a notification a build cannot send is refused as it loads, pointing at the offending table.
+
+  serde became a non-optional dependency along the way, since the module needs it in every build.
+
 ## [0.1.2] - 2026-08-14
 
 ### Added
@@ -55,7 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the `command` serde adapter reading a `std::process::Command` from a shell line string or a program-plus-arguments list.
 - Added the `shell_expanded_string` and `shell_expanded_path` deserializers expanding environment variables in string and path config fields.
 
-[unreleased]: https://github.com/pimalaya/config/compare/v0.1.2..HEAD
+[unreleased]: https://github.com/pimalaya/config/compare/v0.1.3..HEAD
+[0.1.3]: https://github.com/pimalaya/config/compare/v0.1.2..v0.1.3
 [0.1.2]: https://github.com/pimalaya/config/compare/v0.1.1..v0.1.2
 [0.1.1]: https://github.com/pimalaya/config/compare/v0.1.0..v0.1.1
 [0.1.0]: https://github.com/pimalaya/config/compare/v0.0.2..v0.1.0
