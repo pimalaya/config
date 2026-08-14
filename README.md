@@ -9,10 +9,10 @@ Config utils for Pimalaya
 
 - [Features](#features)
 - [Usage](#usage)
-- [AI disclosure](#ai-disclosure)
+- [AI policy](https://github.com/pimalaya/.github/blob/master/AI_POLICY.md)
 - [License](#license)
 - [Social](#social)
-- [Contributing](#contributing)
+- [Contributing](./CONTRIBUTING.md)
 - [Sponsoring](#sponsoring)
 
 ## Features
@@ -20,6 +20,7 @@ Config utils for Pimalaya
 - **TOML loader**: reads a project's TOML configuration from explicit paths or the platform default locations, deep-merging several files into one and telling a missing file apart from an unreadable one so callers can launch a wizard (requires `toml` feature).
 - **Secret resolution**: resolves a secret from a literal value or a shell command's standard output, evaluated lazily at the moment it is needed rather than cached (requires `secret` feature).
 - **Shell command deserialization**: a serde adapter reading a command as a shell line string or a program-plus-arguments list, writing either shape back unchanged.
+- **Desktop notification deserialization**: the same adapter shape for notifications, reading a summary and a body into a ready-to-show notification (requires `notify` feature).
 
 > [!TIP]
 > pimalaya-config is written in [Rust](https://www.rust-lang.org/) and uses [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to gate the loader and the secret resolver. The default feature set is declared in [Cargo.toml](./Cargo.toml) or on [docs.rs](https://docs.rs/crate/pimalaya-config/latest/features).
@@ -28,35 +29,18 @@ Config utils for Pimalaya
 
 The whole API is documented on [docs.rs](https://docs.rs/pimalaya-config/latest/pimalaya_config); the Pimalaya command-line tools are its real-world consumers.
 
-## AI disclosure
-
-This project is developed with AI assistance. This section documents how, so users and downstream packagers can make informed decisions.
-
-- **Tools**: Claude Code (Anthropic), invoked locally with a persistent project-scoped memory and a small set of repo-specific rules.
-- **Used for**: Refactors, mechanical multi-file edits, boilerplate (feature gates, error enums, derive macros, trait impls), test scaffolding, doc polish, exploratory design conversations.
-- **Not used for**: Engineering, critical code, git manipulation (commit, merge, rebase…), real-world tests.
-- **Verification**: Every AI-assisted change is read, compiled, tested, and formatted before commit. Behavioural correctness is verified against the relevant RFC or upstream spec, not assumed from the model output. Tests are never adjusted to fit AI-generated code; the code is adjusted to fit correct behaviour.
-- **Limitations**: AI models occasionally produce code that compiles and passes tests but is subtly wrong. The verification workflow catches most of this; it does not catch all of it. Bug reports are welcome and taken seriously.
-- **Last reviewed**: 16/07/2026
-
 ## License
 
-This project is dual-licensed under either of:
+This project is licensed under either of:
 
-- [Apache License, Version 2.0](./LICENSE-APACHE)
-- [MIT License](./LICENSE-MIT)
-
-at your option.
+- [MIT license](LICENSE-MIT)
+- [Apache License, Version 2.0](LICENSE-APACHE)
 
 ## Social
 
 - Chat on [Matrix](https://matrix.to/#/#pimalaya:matrix.org)
 - News on [Mastodon](https://fosstodon.org/@pimalaya) or [RSS](https://fosstodon.org/@pimalaya.rss)
 - Mail at [pimalaya.org@posteo.net](mailto:pimalaya.org@posteo.net)
-
-## Contributing
-
-Contributions are welcome: start with [CONTRIBUTING.md](./CONTRIBUTING.md), which opens with the Pimalaya-wide guides to read first.
 
 ## Sponsoring
 
@@ -67,7 +51,7 @@ Special thanks to the [NLnet foundation](https://nlnet.nl/) and the [European Co
 - 2022 → 2023: [NGI Assure](https://nlnet.nl/project/Himalaya/)
 - 2023 → 2024: [NGI Zero Entrust](https://nlnet.nl/project/Pimalaya/)
 - 2024 → 2026: [NGI Zero Core](https://nlnet.nl/project/Pimalaya-PIM/)
-- *2027 in preparation…*
+- 2026 → 2027: [NGI Zero Commons Fund](https://nlnet.nl/project/Pimalaya-pimdir/)
 
 If you appreciate the project, feel free to donate using one of the following providers:
 

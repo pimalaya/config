@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-14
+
+### Added
+
+- Added the `notify` serde adapter, reading a `notify_rust::Notification` from a summary and a body.
+
+  It is the counterpart of the `command` adapter, and works the same way: `#[serde(with = "pimalaya_config::notify")]` on a field of that type reads `{ summary = "…", body = "…" }` and writes the same shape back, dropping an empty body. Both hand back a ready-to-use value of a foreign type and perform no I/O, so this crate builds the process and the notification while the caller runs and shows them. Expanding a template into a summary stays with the caller too, since which variables exist is its business.
+
+  It sits behind the `notify` feature, which pulls notify-rust with its D-Bus backend, the one every Pimalaya binary sending notifications already uses. That backend links against the system D-Bus, so the `vendored` feature forwards to notify-rust for the platforms lacking one.
+
 ## [0.1.1] - 2026-07-25
 
 ### Added
@@ -45,7 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the `command` serde adapter reading a `std::process::Command` from a shell line string or a program-plus-arguments list.
 - Added the `shell_expanded_string` and `shell_expanded_path` deserializers expanding environment variables in string and path config fields.
 
-[unreleased]: https://github.com/pimalaya/config/compare/v0.1.1..HEAD
+[unreleased]: https://github.com/pimalaya/config/compare/v0.1.2..HEAD
+[0.1.2]: https://github.com/pimalaya/config/compare/v0.1.1..v0.1.2
 [0.1.1]: https://github.com/pimalaya/config/compare/v0.1.0..v0.1.1
 [0.1.0]: https://github.com/pimalaya/config/compare/v0.0.2..v0.1.0
 [0.0.2]: https://github.com/pimalaya/config/compare/v0.0.1..v0.0.2
