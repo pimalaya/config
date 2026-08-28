@@ -1,7 +1,15 @@
-//! Serde adapter for [`std::process::Command`].
+//! A command as a configuration writes it, and the serde adapter for
+//! [`std::process::Command`].
 //!
-//! Use via `#[serde(with = "pimalaya_config::command")]` on a field
-//! (or enum-variant payload) of type [`std::process::Command`].
+//! [`CommandConfig`] is the configured shape, kept as written: it is
+//! what a field holding a command should store, being comparable,
+//! hashable and cheap to clone, none of which a built
+//! [`std::process::Command`] is. It becomes one through
+//! [`CommandConfig::to_command`], at the moment something runs it.
+//!
+//! The adapter (`#[serde(with = "pimalaya_config::command")]` on a field
+//! of type [`std::process::Command`]) serves a caller that wants the
+//! runnable form directly, having nothing to compare or clone.
 //!
 //! Two TOML shapes are accepted:
 //!
@@ -17,25 +25,88 @@
 //! Empty inputs (empty string, blank string, empty array) are
 //! deserialization errors.
 //!
-//! Serialization mirrors the two shapes: a command built through the
-//! platform shell (see [`shell`]) is written back as the bare command
-//! line string it came from, and any other command is written as the
-//! program + args sequence. A string-form command therefore round-trips
-//! as the same string rather than the verbose `["/bin/sh", "-c", ...]`.
+//! Serialization mirrors the two shapes. A [`CommandConfig`] writes back
+//! the shape it was read as, having kept it. The [`std::process::Command`]
+//! adapter has no such memory and recovers it: a command built through
+//! [`shell`] is written as its bare command line, and any other as the
+//! program + args sequence.
 
 use std::{fmt, process::Command};
 
 use serde::{
-    Deserializer, Serializer,
+    Deserialize, Deserializer, Serialize, Serializer,
     de::{Error, SeqAccess, Visitor},
     ser::SerializeSeq,
 };
 
+/// A command as a configuration writes it: a shell line, or a program
+/// and its arguments.
+///
+/// The two are distinct values, and comparing them never crosses the
+/// variants: a `Shell` line and the `Argv` spelling that runs it through
+/// the platform shell do the same thing and are still not equal here.
+/// Treating one as the other means guessing what a configuration meant,
+/// and a caller keyed on this, resolving a credential by command, is the
+/// last place to guess.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum CommandConfig {
+    /// A shell command line, run through the platform shell (see
+    /// [`shell`]).
+    Shell(String),
+    /// A program and its arguments, run with no shell in between.
+    Argv {
+        /// The program to execute.
+        program: String,
+        /// Its arguments, empty for a program taking none. The program
+        /// is a field of its own so an argv cannot be empty, which the
+        /// shape a sequence deserializes from would otherwise allow.
+        args: Vec<String>,
+    },
+}
+
+impl CommandConfig {
+    /// Builds the runnable command, which is where the platform shell
+    /// enters for a [`Shell`](Self::Shell) line.
+    pub fn to_command(&self) -> Command {
+        match self {
+            Self::Shell(line) => shell(line),
+            Self::Argv { program, args } => {
+                let mut cmd = Command::new(program);
+                cmd.args(args);
+                cmd
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for CommandConfig {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(CommandVisitor)
+    }
+}
+
+impl Serialize for CommandConfig {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Shell(line) => serializer.serialize_str(line),
+            Self::Argv { program, args } => {
+                let mut seq = serializer.serialize_seq(Some(args.len() + 1))?;
+                seq.serialize_element(program)?;
+
+                for arg in args {
+                    seq.serialize_element(arg)?;
+                }
+
+                seq.end()
+            }
+        }
+    }
+}
+
 /// Builds a [`Command`] that runs `line` through the platform shell:
 /// `/bin/sh -c <line>` on Unix, `cmd /C <line>` on Windows. Used by
-/// the string-form deserializer; exposed so callers writing the shell
-/// command line themselves (e.g. interactive wizards) can match the
-/// same semantics.
+/// [`CommandConfig::to_command`]; exposed so callers writing the shell
+/// command line themselves can match the same semantics.
 pub fn shell(line: &str) -> Command {
     let (program, flag) = if cfg!(windows) {
         ("cmd", "/C")
@@ -52,7 +123,7 @@ pub fn shell(line: &str) -> Command {
 /// program-plus-arguments list. See the module docs for the accepted
 /// TOML shapes.
 pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Command, D::Error> {
-    deserializer.deserialize_any(CommandVisitor)
+    CommandConfig::deserialize(deserializer).map(|config| config.to_command())
 }
 
 /// Serializes a [`Command`] back to the shape it came from: a bare
@@ -101,7 +172,7 @@ fn shell_line<'a>(program: &str, args: &'a [String]) -> Option<&'a str> {
 struct CommandVisitor;
 
 impl<'de> Visitor<'de> for CommandVisitor {
-    type Value = Command;
+    type Value = CommandConfig;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str(
@@ -117,7 +188,7 @@ impl<'de> Visitor<'de> for CommandVisitor {
             return Err(E::custom("command cannot be empty"));
         }
 
-        Ok(shell(line))
+        Ok(CommandConfig::Shell(line.to_owned()))
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
@@ -125,13 +196,13 @@ impl<'de> Visitor<'de> for CommandVisitor {
             return Err(<A::Error as Error>::custom("command cannot be empty"));
         };
 
-        let mut cmd = Command::new(program);
+        let mut args = Vec::new();
 
         while let Some(arg) = seq.next_element::<String>()? {
-            cmd.arg(arg);
+            args.push(arg);
         }
 
-        Ok(cmd)
+        Ok(CommandConfig::Argv { program, args })
     }
 }
 
@@ -140,6 +211,8 @@ mod tests {
     use std::process::Command;
 
     use serde::de::value::{Error, SeqDeserializer, StringDeserializer};
+
+    use super::CommandConfig;
 
     fn de_str(s: &str) -> Result<Command, Error> {
         let d = StringDeserializer::<Error>::new(s.to_owned());
@@ -219,5 +292,34 @@ mod tests {
         })
         .unwrap();
         assert_eq!(out.trim(), r#"cmd = ["pass", "show", "foo"]"#);
+    }
+
+    #[derive(serde::Deserialize, serde::Serialize)]
+    struct WrapConfig {
+        cmd: CommandConfig,
+    }
+
+    #[test]
+    fn a_configured_command_round_trips_as_the_shape_it_was_written_in() {
+        for written in [
+            r#"cmd = "pass show foo""#,
+            r#"cmd = ["pass", "show", "foo"]"#,
+        ] {
+            let parsed: WrapConfig = toml::from_str(written).unwrap();
+            assert_eq!(toml::to_string(&parsed).unwrap().trim(), written);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_shell_line_and_its_argv_spelling_are_two_values() {
+        let shell = CommandConfig::Shell(String::from("pass show foo"));
+        let argv = CommandConfig::Argv {
+            program: String::from("/bin/sh"),
+            args: vec![String::from("-c"), String::from("pass show foo")],
+        };
+
+        assert_ne!(shell, argv);
+        assert_eq!(parts(&shell.to_command()), parts(&argv.to_command()));
     }
 }

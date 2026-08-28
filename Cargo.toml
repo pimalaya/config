@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = ["toml", "secret", "notify"]
 notify = ["dep:notify-rust", "notify-rust/d"]
-secret = ["dep:secrecy", "dep:thiserror"]
+secret = ["dep:log", "dep:secrecy", "dep:thiserror"]
 toml = ["dep:anyhow", "dep:dirs", "dep:log", "dep:shellexpand", "dep:toml"]
 vendored = ["notify-rust?/d_vendored"]
 

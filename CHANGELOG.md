@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `command::CommandConfig`, a command as a configuration writes it: a shell line, or a program and its arguments. It is the shape a field holding a command should store, being comparable, hashable and cheap to clone, none of which a built `std::process::Command` is, and it becomes one through `to_command` at the moment something runs it. It writes back the shape it was read as, having kept it, where the `std::process::Command` adapter has to recover that from the built command.
+
+- Added `secret::SecretResolver`, resolving secrets while memoizing the commands it spawns, so a command named by several configuration fields is run once instead of once per field. A `pass` or `gpg` entry shared by an account's IMAP and SMTP tables now costs one key unlock per resolver rather than one per field. Distinct is `CommandConfig`'s own equality, which never crosses the two shapes: a shell line and the argv spelling that runs it through the platform shell are two commands, whatever they end up running. The resolver holds plaintext for as long as it lives and is meant to be dropped with the runtime account it builds.
+
+### Changed
+
+- **BREAKING**: `Secret::Command` carries a `command::CommandConfig` instead of a `std::process::Command`.
+
+  A built command is neither comparable, hashable nor clonable, and has forgotten the shape it came from, so a secret holding one could not be compared without rebuilding a shape out of it, nor cloned without copying it field by field. Keeping what the configuration wrote makes both trivial and removes a class of bug with them: the environment overrides and working directory a built command could carry were dropped by the clone and silently discarded by the serializer, and are now simply not representable. A caller constructs `CommandConfig::Shell(line)` or `CommandConfig::Argv { program, args }` where it built a `Command` before.
+
+  The `command` module keeps serving `std::process::Command` for a field that wants the runnable form directly (`#[serde(with = "pimalaya_config::command")]`), and `command::shell` is unchanged. Both TOML shapes parse and serialize exactly as before, so no configuration file changes.
+
+- Logged secret command resolution at `debug`, with the time the spawn took, since a locked `gpg-agent` answers in seconds and the wait was previously silent at every log level. Neither the value nor the command arguments are logged, a command line being free to carry the secret itself.
+
 ### Fixed
 
 - **`TomlConfig::target_path` named a file that shadows the one being read.** It answered with the platform path (`$XDG_CONFIG_HOME/<project>/config.toml`) whenever no explicit path was given, while `from_paths_or_default` reads the *first* default path that exists and merges nothing. For a project configured through `$HOME/.<project>rc`, the two disagree: a wizard handed the platform path writes a second configuration that takes precedence and hides every account in the first, and the caller's clobber guard cannot fire, the path it was given being exactly the one that does not exist yet. It now answers with the explicit path when one was given, else the configuration already in effect, else the platform path, so a first run still lands where it always did.

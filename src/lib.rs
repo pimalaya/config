@@ -25,10 +25,14 @@
 //!
 //! [`secret`] (`secret` feature) holds the [`Secret`] enum resolving a
 //! secret from a literal value or a shell command's standard output,
-//! lazily at the moment it is needed rather than cached. [`command`]
-//! (same feature) is the serde adapter its `Command` variant relies on,
-//! reading a [`std::process::Command`] from a shell line string or a
-//! program-plus-arguments list and writing either shape back unchanged.
+//! lazily at the moment it is needed rather than cached, and the
+//! [`SecretResolver`] memoizing those spawns so a command named by
+//! several fields is run once. [`command`] (same feature) holds what a
+//! configured command is: a [`CommandConfig`], read from a shell line
+//! string or a program-plus-arguments list and written back as the
+//! shape it came from, which becomes a [`std::process::Command`] only
+//! when something runs it. The module doubles as the serde adapter for
+//! a field holding that runnable form directly.
 //!
 //! [`notify`] is its counterpart for desktop notifications, reading a
 //! [`Notification`] from a summary and a body. It is always compiled,
@@ -52,7 +56,9 @@
 //! [`TomlConfig`]: toml::TomlConfig
 //! [`shell_expanded_string`]: toml::shell_expanded_string
 //! [`shell_expanded_path`]: toml::shell_expanded_path
+//! [`CommandConfig`]: command::CommandConfig
 //! [`Secret`]: secret::Secret
+//! [`SecretResolver`]: secret::SecretResolver
 //! [`Notification`]: notify::Notification
 
 #[cfg(feature = "secret")]
