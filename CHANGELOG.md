@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`TomlConfig::target_path` named a file that shadows the one being read.** It answered with the platform path (`$XDG_CONFIG_HOME/<project>/config.toml`) whenever no explicit path was given, while `from_paths_or_default` reads the *first* default path that exists and merges nothing. For a project configured through `$HOME/.<project>rc`, the two disagree: a wizard handed the platform path writes a second configuration that takes precedence and hides every account in the first, and the caller's clobber guard cannot fire, the path it was given being exactly the one that does not exist yet. It now answers with the explicit path when one was given, else the configuration already in effect, else the platform path, so a first run still lands where it always did.
+
 ## [0.1.4] - 2026-08-14
 
 ### Changed

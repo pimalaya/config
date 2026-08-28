@@ -127,15 +127,29 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
         }
     }
 
-    /// Returns the path a brand-new configuration should be written
-    /// to: the first explicit path if one was given, otherwise the
-    /// platform default. Used by callers to drive wizard targeting
-    /// after [`from_paths_or_default`] returns `Ok(None)`.
+    /// Returns the path a configuration should be written to: the first
+    /// explicit path when one was given, else the configuration already
+    /// in effect, else the platform default. Used by callers to drive
+    /// wizard targeting, whether or not a configuration exists.
+    ///
+    /// The one in effect comes before the platform default because
+    /// [`from_paths_or_default`] takes the *first* default path that
+    /// exists ([`first_valid_default_path`]) and merges nothing. Naming
+    /// the platform path at a project configured through
+    /// `$HOME/.<project>rc` would therefore target a file that shadows
+    /// every account in the one being read, and a caller guarding
+    /// against clobbering cannot see it coming: the path it was handed
+    /// does not exist yet.
     ///
     /// [`from_paths_or_default`]: Self::from_paths_or_default
+    /// [`first_valid_default_path`]: Self::first_valid_default_path
     fn target_path(paths: &[PathBuf]) -> Result<PathBuf> {
-        match paths.first() {
-            Some(path) => Ok(path.clone()),
+        if let Some(path) = paths.first() {
+            return Ok(path.clone());
+        }
+
+        match Self::first_valid_default_path() {
+            Some(path) => Ok(path),
             None => Self::default_path(),
         }
     }
@@ -345,10 +359,104 @@ pub fn shell_expanded_path<'de, D: Deserializer<'de>>(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use serde::Deserialize;
     use toml::Value;
+
+    use super::TomlConfig;
 
     fn doc(s: &str) -> Value {
         toml::from_str(s).unwrap()
+    }
+
+    /// The two default paths, stubbed: what a project finds on disk is
+    /// the filesystem's business, and what [`TomlConfig::target_path`]
+    /// does with the two answers is this crate's.
+    const RC: &str = "/home/u/.testrc";
+    const PLATFORM: &str = "/home/u/.config/test/config.toml";
+
+    #[derive(Deserialize)]
+    struct Configured;
+
+    impl TomlConfig for Configured {
+        type Account = ();
+
+        fn project_name() -> &'static str {
+            "test"
+        }
+
+        fn take_default_account(&mut self) -> Option<(String, Self::Account)> {
+            None
+        }
+
+        fn take_named_account(&mut self, _name: &str) -> Option<(String, Self::Account)> {
+            None
+        }
+
+        fn first_valid_default_path() -> Option<PathBuf> {
+            Some(PathBuf::from(RC))
+        }
+
+        fn default_path() -> anyhow::Result<PathBuf> {
+            Ok(PathBuf::from(PLATFORM))
+        }
+    }
+
+    #[derive(Deserialize)]
+    struct Unconfigured;
+
+    impl TomlConfig for Unconfigured {
+        type Account = ();
+
+        fn project_name() -> &'static str {
+            "test"
+        }
+
+        fn take_default_account(&mut self) -> Option<(String, Self::Account)> {
+            None
+        }
+
+        fn take_named_account(&mut self, _name: &str) -> Option<(String, Self::Account)> {
+            None
+        }
+
+        fn first_valid_default_path() -> Option<PathBuf> {
+            None
+        }
+
+        fn default_path() -> anyhow::Result<PathBuf> {
+            Ok(PathBuf::from(PLATFORM))
+        }
+    }
+
+    /// The loader takes the first default path that exists and merges
+    /// nothing, so a write targeting the platform path while an rc file
+    /// is the one being read would create a file that shadows every
+    /// account in it, silently and with nothing to clobber.
+    #[test]
+    fn a_write_targets_the_configuration_being_read() {
+        let target = Configured::target_path(&[]).expect("resolve the target path");
+
+        assert_eq!(target, PathBuf::from(RC));
+    }
+
+    #[test]
+    fn a_first_run_targets_the_platform_path() {
+        let target = Unconfigured::target_path(&[]).expect("resolve the target path");
+
+        assert_eq!(target, PathBuf::from(PLATFORM));
+    }
+
+    /// An explicit path names the file the run is about, so it wins over
+    /// both defaults whether or not it exists yet.
+    #[test]
+    fn an_explicit_path_wins_over_both_defaults() {
+        let explicit = PathBuf::from("/tmp/elsewhere.toml");
+        let target = Configured::target_path(std::slice::from_ref(&explicit))
+            .expect("resolve the target path");
+
+        assert_eq!(target, explicit);
     }
 
     fn merge(base: &str, other: &str) -> Result<Value, String> {
