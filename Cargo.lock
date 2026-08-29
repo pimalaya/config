@@ -326,7 +326,7 @@ checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
 
 [[package]]
 name = "pimalaya-config"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "dirs",

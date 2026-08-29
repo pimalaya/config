@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-29
+
 ### Added
 
 - Added `command::CommandConfig`, a command as a configuration writes it: a shell line, or a program and its arguments. It is the shape a field holding a command should store, being comparable, hashable and cheap to clone, none of which a built `std::process::Command` is, and it becomes one through `to_command` at the moment something runs it. It writes back the shape it was read as, having kept it, where the `std::process::Command` adapter has to recover that from the built command.
@@ -93,7 +95,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the `command` serde adapter reading a `std::process::Command` from a shell line string or a program-plus-arguments list.
 - Added the `shell_expanded_string` and `shell_expanded_path` deserializers expanding environment variables in string and path config fields.
 
-[unreleased]: https://github.com/pimalaya/config/compare/v0.1.4..HEAD
+[unreleased]: https://github.com/pimalaya/config/compare/v0.2.0..HEAD
+[0.2.0]: https://github.com/pimalaya/config/compare/v0.1.4..v0.2.0
 [0.1.4]: https://github.com/pimalaya/config/compare/v0.1.3..v0.1.4
 [0.1.3]: https://github.com/pimalaya/config/compare/v0.1.2..v0.1.3
 [0.1.2]: https://github.com/pimalaya/config/compare/v0.1.1..v0.1.2
