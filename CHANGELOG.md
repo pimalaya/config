@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `toml::opt_shell_expanded_path`, the optional variant of `toml::shell_expanded_path`, to pair with `#[serde(default)]`.
+
 ## [0.2.0] - 2026-08-29
 
 ### Added

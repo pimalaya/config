@@ -5,8 +5,9 @@
 //! several files into one, and maps a missing file to `Ok(None)` so
 //! callers can launch a wizard. [`to_string`] is the matching serializer,
 //! emitting a compact document a wizard can print. The
-//! [`shell_expanded_string`] and [`shell_expanded_path`] deserializers
-//! expand environment variables in string and path config fields.
+//! [`shell_expanded_string`], [`shell_expanded_path`] and
+//! [`opt_shell_expanded_path`] deserializers expand environment variables
+//! in string and path config fields.
 
 use std::{
     borrow::Cow,
@@ -355,6 +356,17 @@ pub fn shell_expanded_path<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<PathBuf, D::Error> {
     shell_expanded_string(deserializer).map(Into::into)
+}
+
+/// Deserializes an optional path field, as [`shell_expanded_path`] does
+/// for a mandatory one.
+///
+/// Pair it with `#[serde(default)]`: serde only calls it for a present
+/// key, an absent one defaulting to `None`.
+pub fn opt_shell_expanded_path<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<PathBuf>, D::Error> {
+    shell_expanded_path(deserializer).map(Some)
 }
 
 #[cfg(test)]
