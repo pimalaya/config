@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-02
+
 ### Added
 
 - Added `toml::opt_shell_expanded_path`, the optional variant of `toml::shell_expanded_path`, to pair with `#[serde(default)]`.
@@ -99,7 +101,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the `command` serde adapter reading a `std::process::Command` from a shell line string or a program-plus-arguments list.
 - Added the `shell_expanded_string` and `shell_expanded_path` deserializers expanding environment variables in string and path config fields.
 
-[unreleased]: https://github.com/pimalaya/config/compare/v0.2.0..HEAD
+[unreleased]: https://github.com/pimalaya/config/compare/v0.2.1..HEAD
+[0.2.1]: https://github.com/pimalaya/config/compare/v0.2.0..v0.2.1
 [0.2.0]: https://github.com/pimalaya/config/compare/v0.1.4..v0.2.0
 [0.1.4]: https://github.com/pimalaya/config/compare/v0.1.3..v0.1.4
 [0.1.3]: https://github.com/pimalaya/config/compare/v0.1.2..v0.1.3
