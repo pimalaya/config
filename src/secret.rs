@@ -34,9 +34,7 @@ pub enum SecretError {
     /// Waiting for the secret command to exit failed.
     #[error("Wait secret command error")]
     Wait(#[source] io::Error),
-    /// The secret command exited with a non-zero status; the payload
-    /// carries its trimmed standard output or error, or its program and
-    /// exit status when it printed nothing.
+    /// The secret command failed; the payload carries only its exit status.
     #[error("Secret command error: {0}")]
     Output(String),
 }
@@ -90,21 +88,7 @@ impl Secret {
                 let output = cmd.stdin(stdin).output().map_err(SecretError::Spawn)?;
 
                 if !output.status.success() {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-
-                    // NOTE: a lookup missing its entry (`secret-tool`,
-                    // `security`) exits silently, which alone would leave
-                    // the error blank.
-                    let err = match (stdout.trim(), stderr.trim()) {
-                        ("", "") => {
-                            let program = cmd.get_program().to_string_lossy();
-                            format!("{program} printed nothing, {}", output.status)
-                        }
-                        ("", err) | (err, _) => err.to_owned(),
-                    };
-
-                    return Err(SecretError::Output(err));
+                    return Err(SecretError::Output(output.status.to_string()));
                 }
 
                 let secret = String::from_utf8_lossy(&output.stdout);
@@ -193,6 +177,31 @@ mod tests {
 
     fn shell(line: &str) -> Secret {
         Secret::Command(CommandConfig::Shell(line.to_owned()))
+    }
+
+    #[test]
+    fn a_failed_helper_never_exposes_stdout_or_stderr() {
+        for line in [
+            "printf SECRET_STDOUT_MARKER; printf SECRET_STDERR_MARKER >&2; exit 7",
+            "printf SECRET_STDERR_MARKER >&2; exit 7",
+            "exit 7",
+        ] {
+            let err = shell(line).get().unwrap_err();
+            assert!(matches!(err, crate::secret::SecretError::Output(_)));
+            let displayed = err.to_string();
+            let debug = format!("{err:?}");
+            assert!(displayed.contains('7'));
+            assert!(!displayed.contains("SECRET_"));
+            assert!(!debug.contains("SECRET_"));
+        }
+    }
+
+    #[test]
+    fn a_successful_helper_still_returns_the_first_line() {
+        let secret = shell("printf 'dummy-password\\nsecond-line\\n'")
+            .get()
+            .unwrap();
+        assert_eq!(secret.expose_secret(), "dummy-password");
     }
 
     #[test]
