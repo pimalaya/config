@@ -29,8 +29,7 @@ pub enum SecretError {
     /// Waiting for the secret command to exit failed.
     #[error("Wait secret command error")]
     Wait(#[source] io::Error),
-    /// The secret command exited with a non-zero status; the payload
-    /// carries its trimmed standard error or output.
+    /// The secret command failed; the payload carries only its exit status.
     #[error("Secret command error: {0}")]
     Output(String),
 }
@@ -80,13 +79,7 @@ impl Secret {
                     .map_err(SecretError::Spawn)?;
 
                 if !output.status.success() {
-                    let bytes = if output.stdout.is_empty() {
-                        output.stderr
-                    } else {
-                        output.stdout
-                    };
-                    let err = String::from_utf8_lossy(&bytes).trim().to_string();
-                    return Err(SecretError::Output(err));
+                    return Err(SecretError::Output(output.status.to_string()));
                 }
 
                 let secret = String::from_utf8_lossy(&output.stdout);
@@ -175,6 +168,31 @@ mod tests {
 
     fn shell(line: &str) -> Secret {
         Secret::Command(CommandConfig::Shell(line.to_owned()))
+    }
+
+    #[test]
+    fn a_failed_helper_never_exposes_stdout_or_stderr() {
+        for line in [
+            "printf SECRET_STDOUT_MARKER; printf SECRET_STDERR_MARKER >&2; exit 7",
+            "printf SECRET_STDERR_MARKER >&2; exit 7",
+            "exit 7",
+        ] {
+            let err = shell(line).get().unwrap_err();
+            assert!(matches!(err, crate::secret::SecretError::Output(_)));
+            let displayed = err.to_string();
+            let debug = format!("{err:?}");
+            assert!(displayed.contains('7'));
+            assert!(!displayed.contains("SECRET_"));
+            assert!(!debug.contains("SECRET_"));
+        }
+    }
+
+    #[test]
+    fn a_successful_helper_still_returns_the_first_line() {
+        let secret = shell("printf 'dummy-password\\nsecond-line\\n'")
+            .get()
+            .unwrap();
+        assert_eq!(secret.expose_secret(), "dummy-password");
     }
 
     #[test]

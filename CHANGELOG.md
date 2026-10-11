@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed failed credential commands exposing their standard output or standard error through `SecretError`. Failures now report only the exit status.
+
 ## [0.2.1] - 2026-10-02
 
 ### Added
