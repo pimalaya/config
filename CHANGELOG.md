@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed the empty `Secret command error` raised by a command failing silently, such as a `secret-tool lookup` missing its entry: the error now names the program and its exit status. ([himalaya#745](https://github.com/pimalaya/himalaya/issues/745))
+
 ## [0.2.1] - 2026-10-02
 
 ### Added

@@ -30,7 +30,8 @@ pub enum SecretError {
     #[error("Wait secret command error")]
     Wait(#[source] io::Error),
     /// The secret command exited with a non-zero status; the payload
-    /// carries its trimmed standard error or output.
+    /// carries its trimmed standard output or error, or its program and
+    /// exit status when it printed nothing.
     #[error("Secret command error: {0}")]
     Output(String),
 }
@@ -80,12 +81,20 @@ impl Secret {
                     .map_err(SecretError::Spawn)?;
 
                 if !output.status.success() {
-                    let bytes = if output.stdout.is_empty() {
-                        output.stderr
-                    } else {
-                        output.stdout
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+
+                    // NOTE: a lookup missing its entry (`secret-tool`,
+                    // `security`) exits silently, which alone would leave
+                    // the error blank.
+                    let err = match (stdout.trim(), stderr.trim()) {
+                        ("", "") => {
+                            let program = cmd.get_program().to_string_lossy();
+                            format!("{program} printed nothing, {}", output.status)
+                        }
+                        ("", err) | (err, _) => err.to_owned(),
                     };
-                    let err = String::from_utf8_lossy(&bytes).trim().to_string();
+
                     return Err(SecretError::Output(err));
                 }
 
@@ -211,6 +220,27 @@ mod tests {
 
         assert_eq!(first.expose_secret(), "first");
         assert_eq!(second.expose_secret(), "second");
+    }
+
+    #[test]
+    fn a_silent_failing_command_names_its_program_and_status() {
+        let err = Secret::Command(CommandConfig::Argv {
+            program: String::from("false"),
+            args: Vec::new(),
+        })
+        .get()
+        .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .starts_with("Secret command error: false printed nothing, ")
+        );
+    }
+
+    #[test]
+    fn a_failing_command_reports_its_stderr() {
+        let err = shell("echo locked >&2; exit 1").get().unwrap_err();
+        assert_eq!(err.to_string(), "Secret command error: locked");
     }
 
     /// The two shapes are two commands, whatever they end up running:
