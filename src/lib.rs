@@ -17,7 +17,8 @@
 //!
 //! [`toml`] (`toml` feature) holds the [`TomlConfig`] loader trait:
 //! it reads and deep-merges a project's TOML configuration from
-//! explicit paths, falls back to the platform default locations, and
+//! explicit paths, falls back to the default locations layered over
+//! one another (the rc file overriding the platform one), and
 //! tells a missing file (mapped to `Ok(None)` to drive a wizard) apart
 //! from an unreadable one. The module also carries the
 //! [`shell_expanded_string`] and [`shell_expanded_path`] deserializers

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING**: `TomlConfig` loads every default path that exists as a layer instead of the first one alone, each deep-merged on top of the ones before: `$XDG_CONFIG_HOME/<project>/config.toml`, then `$HOME/.config/<project>/config.toml`, then `$HOME/.<project>rc`, which therefore overrides. A file named by two paths, a symlinked rc file being one, is read once. `first_valid_default_path` is replaced by `default_paths` (every candidate) and `valid_default_paths` (the existing ones, deduplicated), and `target_path` names the first layer.
+
+- Read and parse errors name the config file that failed.
+
 ### Fixed
 
 - Fixed the empty `Secret command error` raised by a command failing silently, such as a `secret-tool lookup` missing its entry: the error now names the program and its exit status. ([himalaya#745](https://github.com/pimalaya/himalaya/issues/745))

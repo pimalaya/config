@@ -17,7 +17,7 @@ Config utils for Pimalaya
 
 ## Features
 
-- **TOML loader**: reads a project's TOML configuration from explicit paths or the platform default locations, deep-merging several files into one and telling a missing file apart from an unreadable one so callers can launch a wizard (requires `toml` feature).
+- **TOML loader**: reads a project's TOML configuration from explicit paths or the default locations, deep-merging several files into one (the default ones as layers, `~/.<project>rc` on top) and telling a missing file apart from an unreadable one so callers can launch a wizard (requires `toml` feature).
 - **Secret resolution**: resolves a secret from a literal value or a shell command's standard output, evaluated lazily at the moment it is needed rather than cached (requires `secret` feature).
 - **Shell command deserialization**: a serde adapter reading a command as a shell line string or a program-plus-arguments list, writing either shape back unchanged.
 - **Desktop notification deserialization**: the same adapter shape for notifications, reading a summary and a body into a ready-to-show notification (requires `notify` feature).

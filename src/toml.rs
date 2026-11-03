@@ -1,10 +1,11 @@
 //! TOML configuration loading, merging and shell expansion.
 //!
 //! [`TomlConfig`] is the loader trait: it reads a project's TOML config
-//! from explicit paths or the platform default locations, deep-merges
-//! several files into one, and maps a missing file to `Ok(None)` so
-//! callers can launch a wizard. [`to_string`] is the matching serializer,
-//! emitting a compact document a wizard can print. The
+//! from explicit paths or the default locations, deep-merges several
+//! files into one (the default ones as layers, the rc file on top), and
+//! maps a missing file to `Ok(None)` so callers can launch a wizard.
+//! [`to_string`] is the matching serializer, emitting a compact document
+//! a wizard can print. The
 //! [`shell_expanded_string`], [`shell_expanded_path`] and
 //! [`opt_shell_expanded_path`] deserializers expand environment variables
 //! in string and path config fields.
@@ -57,7 +58,8 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
         }
     }
 
-    /// Read and parse the TOML configuration at the given paths
+    /// Read and parse the TOML configuration at the given paths, each
+    /// deep-merged on top of the ones before
     ///
     /// Returns an error if a configuration file cannot be read or if
     /// a content cannot be parsed.
@@ -68,13 +70,14 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
             }
             1 => {
                 let path = &paths[0];
-                let content = fs::read_to_string(path).context("Read TOML config file error")?;
-                toml::from_str(&content).context("Parse TOML config error")
+                let content = read_config(path)?;
+                toml::from_str(&content)
+                    .with_context(|| format!("Parse TOML config `{}` error", path.display()))
             }
             _ => {
-                let base = fs::read_to_string(&paths[0]).context("Read TOML config file error")?;
-                let mut merged_content: Value =
-                    toml::from_str(&base).context("Parse TOML config error")?;
+                let base = read_config(&paths[0])?;
+                let mut merged_content: Value = toml::from_str(&base)
+                    .with_context(|| format!("Parse TOML config `{}` error", paths[0].display()))?;
 
                 for path in &paths[1..] {
                     let content = match fs::read_to_string(path) {
@@ -85,8 +88,8 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
                         }
                     };
 
-                    let content: Value =
-                        toml::from_str(&content).context("Parse TOML config error")?;
+                    let content: Value = toml::from_str(&content)
+                        .with_context(|| format!("Parse TOML config `{}` error", path.display()))?;
                     merged_content = merge_toml(merged_content, content, "$")?;
                 }
 
@@ -96,7 +99,7 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
     }
 
     /// Loads the configuration from `paths` if any are given, falling
-    /// back to the platform default path otherwise.
+    /// back to the default paths otherwise.
     ///
     /// Returns:
     ///
@@ -119,37 +122,42 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
         }
     }
 
-    /// Loads the configuration from the first valid default path.
-    /// Returns `Ok(None)` if no default path exists.
+    /// Loads the configuration from every default path that exists,
+    /// each one a layer deep-merged on top of the ones before, so the
+    /// rc file overrides the platform one. Returns `Ok(None)` if no
+    /// default path exists.
     fn from_default_paths() -> Result<Option<Self>> {
-        match Self::first_valid_default_path() {
-            Some(path) => Self::from_paths(&[path]).map(Some),
-            None => Ok(None),
+        let paths = Self::valid_default_paths();
+
+        if paths.is_empty() {
+            return Ok(None);
         }
+
+        for path in &paths {
+            debug!("load config layer {}", path.display());
+        }
+
+        Self::from_paths(&paths).map(Some)
     }
 
     /// Returns the path a configuration should be written to: the first
-    /// explicit path when one was given, else the configuration already
-    /// in effect, else the platform default. Used by callers to drive
-    /// wizard targeting, whether or not a configuration exists.
+    /// explicit path when one was given, else the base layer of the
+    /// configuration in effect, else the platform default. Used by
+    /// callers to drive wizard targeting, whether or not a configuration
+    /// exists.
     ///
-    /// The one in effect comes before the platform default because
-    /// [`from_paths_or_default`] takes the *first* default path that
-    /// exists ([`first_valid_default_path`]) and merges nothing. Naming
-    /// the platform path at a project configured through
-    /// `$HOME/.<project>rc` would therefore target a file that shadows
-    /// every account in the one being read, and a caller guarding
-    /// against clobbering cannot see it coming: the path it was handed
-    /// does not exist yet.
+    /// The base layer is the lowest-precedence file, so a write there
+    /// can be overridden by a later layer: a caller appending an account
+    /// checks its name against the merged configuration
+    /// ([`from_paths_or_default`]), not against the target file alone.
     ///
     /// [`from_paths_or_default`]: Self::from_paths_or_default
-    /// [`first_valid_default_path`]: Self::first_valid_default_path
     fn target_path(paths: &[PathBuf]) -> Result<PathBuf> {
         if let Some(path) = paths.first() {
             return Ok(path.clone());
         }
 
-        match Self::first_valid_default_path() {
+        match Self::valid_default_paths().into_iter().next() {
             Some(path) => Ok(path),
             None => Self::default_path(),
         }
@@ -167,24 +175,32 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
         Ok(dir.join(Self::project_name()).join("config.toml"))
     }
 
-    /// Get the first default configuration path that points to a
-    /// valid file
-    ///
-    /// Tries paths in this order:
+    /// Get the default configuration paths, lowest precedence first,
+    /// whether or not they exist:
     ///
     /// - `$XDG_CONFIG_DIR/<project>/config.toml`
     /// - `$HOME/.config/<project>/config.toml`
     /// - `$HOME/.<project>rc`
-    fn first_valid_default_path() -> Option<PathBuf> {
+    fn default_paths() -> Vec<PathBuf> {
         let project = Self::project_name();
+        let mut paths = Vec::with_capacity(3);
 
-        Self::default_path()
-            .ok()
-            .filter(|p| p.exists())
-            .or_else(|| home_dir().map(|p| p.join(".config").join(project).join("config.toml")))
-            .filter(|p| p.exists())
-            .or_else(|| home_dir().map(|p| p.join(format!(".{project}rc"))))
-            .filter(|p| p.exists())
+        if let Ok(path) = Self::default_path() {
+            paths.push(path);
+        }
+
+        if let Some(home) = home_dir() {
+            paths.push(home.join(".config").join(project).join("config.toml"));
+            paths.push(home.join(format!(".{project}rc")));
+        }
+
+        paths
+    }
+
+    /// Get the default configuration paths that point to a file, lowest
+    /// precedence first, each file once.
+    fn valid_default_paths() -> Vec<PathBuf> {
+        existing_once(Self::default_paths())
     }
 }
 
@@ -311,6 +327,40 @@ enum PathStatus {
     Present,
 }
 
+/// Reads a config file, naming it in the error: with several layers
+/// loaded, an error has to say which one failed.
+fn read_config(path: &Path) -> Result<String> {
+    fs::read_to_string(path)
+        .with_context(|| format!("Read TOML config file `{}` error", path.display()))
+}
+
+/// Keeps the paths pointing to a file, in order, dropping a path that
+/// names a file already kept.
+///
+/// Two default paths often name one file: `$XDG_CONFIG_HOME` unset makes
+/// the first two equal, and an rc file may be a symlink to the platform
+/// one. Merging a file onto itself is not harmless, as arrays
+/// concatenate, so files are compared by canonical path.
+fn existing_once(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut seen = Vec::with_capacity(paths.len());
+
+    paths
+        .into_iter()
+        .filter(|path| path.exists())
+        .filter(|path| {
+            let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+
+            if seen.contains(&canonical) {
+                debug!("skip config layer {}, already loaded", path.display());
+                return false;
+            }
+
+            seen.push(canonical);
+            true
+        })
+        .collect()
+}
+
 fn path_status(path: &Path) -> Result<PathStatus> {
     match fs::metadata(path) {
         Ok(_) => Ok(PathStatus::Present),
@@ -371,7 +421,7 @@ pub fn opt_shell_expanded_path<'de, D: Deserializer<'de>>(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{collections::BTreeMap, env, fs, path::PathBuf, process};
 
     use serde::Deserialize;
     use toml::Value;
@@ -406,8 +456,8 @@ mod tests {
             None
         }
 
-        fn first_valid_default_path() -> Option<PathBuf> {
-            Some(PathBuf::from(RC))
+        fn valid_default_paths() -> Vec<PathBuf> {
+            vec![PathBuf::from(RC)]
         }
 
         fn default_path() -> anyhow::Result<PathBuf> {
@@ -433,8 +483,8 @@ mod tests {
             None
         }
 
-        fn first_valid_default_path() -> Option<PathBuf> {
-            None
+        fn valid_default_paths() -> Vec<PathBuf> {
+            Vec::new()
         }
 
         fn default_path() -> anyhow::Result<PathBuf> {
@@ -442,10 +492,8 @@ mod tests {
         }
     }
 
-    /// The loader takes the first default path that exists and merges
-    /// nothing, so a write targeting the platform path while an rc file
-    /// is the one being read would create a file that shadows every
-    /// account in it, silently and with nothing to clobber.
+    /// A project configured through its rc file alone gets its writes
+    /// there, not in a new platform file holding one account.
     #[test]
     fn a_write_targets_the_configuration_being_read() {
         let target = Configured::target_path(&[]).expect("resolve the target path");
@@ -469,6 +517,112 @@ mod tests {
             .expect("resolve the target path");
 
         assert_eq!(target, explicit);
+    }
+
+    /// A directory under the system temp one, unique to this test
+    /// process and to `name`.
+    fn test_dir(name: &str) -> PathBuf {
+        env::temp_dir()
+            .join(format!("pimalaya-config-{}", process::id()))
+            .join(name)
+    }
+
+    /// The [`test_dir`] of `name`, created empty.
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = test_dir(name);
+
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create the scratch directory");
+        dir
+    }
+
+    /// The default paths, as real files: the platform config, then the
+    /// rc file.
+    #[derive(Debug, Deserialize)]
+    struct Layered {
+        accounts: BTreeMap<String, BTreeMap<String, i64>>,
+    }
+
+    impl TomlConfig for Layered {
+        type Account = ();
+
+        fn project_name() -> &'static str {
+            "test"
+        }
+
+        fn take_default_account(&mut self) -> Option<(String, Self::Account)> {
+            None
+        }
+
+        fn take_named_account(&mut self, _name: &str) -> Option<(String, Self::Account)> {
+            None
+        }
+
+        fn default_paths() -> Vec<PathBuf> {
+            let dir = test_dir("layers");
+            vec![dir.join("config.toml"), dir.join(".testrc")]
+        }
+    }
+
+    /// Both default files load, the rc one on top: an account only one
+    /// of them declares survives, a key both declare takes the rc value.
+    #[test]
+    fn the_rc_file_layers_over_the_platform_one() {
+        let dir = scratch_dir("layers");
+        let platform = dir.join("config.toml");
+        fs::write(
+            &platform,
+            "[accounts.a]\nx = 1\ny = 1\n[accounts.b]\nx = 1\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join(".testrc"),
+            "[accounts.a]\nx = 2\n[accounts.c]\nx = 3\n",
+        )
+        .unwrap();
+
+        let config = Layered::from_paths_or_default(&[])
+            .expect("load the layers")
+            .expect("find a configuration");
+
+        let a = BTreeMap::from([("x".to_owned(), 2), ("y".to_owned(), 1)]);
+        assert_eq!(config.accounts["a"], a);
+        assert_eq!(config.accounts["b"]["x"], 1);
+        assert_eq!(config.accounts["c"]["x"], 3);
+
+        let target = Layered::target_path(&[]).expect("resolve the target path");
+        assert_eq!(target, platform);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn missing_paths_are_no_layer() {
+        let dir = scratch_dir("missing");
+        let rc = dir.join(".testrc");
+        fs::write(&rc, "").unwrap();
+
+        let paths = super::existing_once(vec![dir.join("config.toml"), rc.clone()]);
+        assert_eq!(paths, vec![rc]);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// An rc file symlinked to the platform one is one file, loaded once:
+    /// merged onto itself, every array would come out doubled.
+    #[cfg(unix)]
+    #[test]
+    fn a_file_named_twice_is_one_layer() {
+        let dir = scratch_dir("linked");
+        let platform = dir.join("config.toml");
+        let rc = dir.join(".testrc");
+        fs::write(&platform, "xs = [1]\n").unwrap();
+        std::os::unix::fs::symlink(&platform, &rc).unwrap();
+
+        let paths = super::existing_once(vec![platform.clone(), platform.clone(), rc]);
+        assert_eq!(paths, vec![platform]);
+
+        fs::remove_dir_all(dir).unwrap();
     }
 
     fn merge(base: &str, other: &str) -> Result<Value, String> {
