@@ -7,43 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-03
+
+### Added
+
+- Added `toml::TomlConfig::default_paths`, every default config path candidate.
+- Added `toml::TomlConfig::valid_default_paths`, the existing default paths, deduplicated.
+
 ### Changed
 
-- **BREAKING**: `TomlConfig` loads every default path that exists as a layer instead of the first one alone, each deep-merged on top of the ones before: `$XDG_CONFIG_HOME/<project>/config.toml`, then `$HOME/.config/<project>/config.toml`, then `$HOME/.<project>rc`, which therefore overrides. A file named by two paths, a symlinked rc file being one, is read once. `first_valid_default_path` is replaced by `default_paths` (every candidate) and `valid_default_paths` (the existing ones, deduplicated), and `target_path` names the first layer.
+- **BREAKING**: Changed `toml::TomlConfig` to load every existing default path as a layer, not only the first.
 
-- Read and parse errors name the config file that failed.
+  `$HOME/.<project>rc` merges last and overrides the platform files. A file reached by two paths is read once.
+
+- Changed TOML read and parse errors to name the failing config file.
+
+### Removed
+
+- **BREAKING**: Removed `toml::TomlConfig::first_valid_default_path`, replaced by `valid_default_paths`.
 
 ### Fixed
 
-- Fixed the empty `Secret command error` raised by a command failing silently, such as a `secret-tool lookup` missing its entry: the error now names the program and its exit status. ([himalaya#745](https://github.com/pimalaya/himalaya/issues/745))
+- Fixed the empty `Secret command error` of a command failing silently ([pimalaya/himalaya#745](https://github.com/pimalaya/himalaya/issues/745)).
+
+  A `secret-tool lookup` missing its entry prints nothing. The error now names the program and its exit status.
 
 ## [0.2.1] - 2026-10-02
 
 ### Added
 
-- Added `toml::opt_shell_expanded_path`, the optional variant of `toml::shell_expanded_path`, to pair with `#[serde(default)]`.
+- Added `toml::opt_shell_expanded_path`, the optional variant of `toml::shell_expanded_path`.
 
 ## [0.2.0] - 2026-08-29
 
 ### Added
 
-- Added `command::CommandConfig`, a command as a configuration writes it: a shell line, or a program and its arguments. It is the shape a field holding a command should store, being comparable, hashable and cheap to clone, none of which a built `std::process::Command` is, and it becomes one through `to_command` at the moment something runs it. It writes back the shape it was read as, having kept it, where the `std::process::Command` adapter has to recover that from the built command.
+- Added `command::CommandConfig`, a shell line or a program and its arguments, as the configuration wrote it.
 
-- Added `secret::SecretResolver`, resolving secrets while memoizing the commands it spawns, so a command named by several configuration fields is run once instead of once per field. A `pass` or `gpg` entry shared by an account's IMAP and SMTP tables now costs one key unlock per resolver rather than one per field. Distinct is `CommandConfig`'s own equality, which never crosses the two shapes: a shell line and the argv spelling that runs it through the platform shell are two commands, whatever they end up running. The resolver holds plaintext for as long as it lives and is meant to be dropped with the runtime account it builds.
+  Unlike `std::process::Command`, it is comparable, hashable and clonable. `to_command` builds the runnable command.
+
+- Added `secret::SecretResolver`, running each distinct secret command once.
+
+  A `pass` entry shared by an account's IMAP and SMTP tables now costs one key unlock.
 
 ### Changed
 
-- **BREAKING**: `Secret::Command` carries a `command::CommandConfig` instead of a `std::process::Command`.
+- **BREAKING**: Changed `secret::Secret::Command` to carry a `command::CommandConfig` instead of a `std::process::Command`.
 
-  A built command is neither comparable, hashable nor clonable, and has forgotten the shape it came from, so a secret holding one could not be compared without rebuilding a shape out of it, nor cloned without copying it field by field. Keeping what the configuration wrote makes both trivial and removes a class of bug with them: the environment overrides and working directory a built command could carry were dropped by the clone and silently discarded by the serializer, and are now simply not representable. A caller constructs `CommandConfig::Shell(line)` or `CommandConfig::Argv { program, args }` where it built a `Command` before.
+  Configuration files parse and serialize unchanged.
 
-  The `command` module keeps serving `std::process::Command` for a field that wants the runnable form directly (`#[serde(with = "pimalaya_config::command")]`), and `command::shell` is unchanged. Both TOML shapes parse and serialize exactly as before, so no configuration file changes.
-
-- Logged secret command resolution at `debug`, with the time the spawn took, since a locked `gpg-agent` answers in seconds and the wait was previously silent at every log level. Neither the value nor the command arguments are logged, a command line being free to carry the secret itself.
+- Changed secret command resolution to log its spawn duration at `debug`.
 
 ### Fixed
 
-- **`TomlConfig::target_path` named a file that shadows the one being read.** It answered with the platform path (`$XDG_CONFIG_HOME/<project>/config.toml`) whenever no explicit path was given, while `from_paths_or_default` reads the *first* default path that exists and merges nothing. For a project configured through `$HOME/.<project>rc`, the two disagree: a wizard handed the platform path writes a second configuration that takes precedence and hides every account in the first, and the caller's clobber guard cannot fire, the path it was given being exactly the one that does not exist yet. It now answers with the explicit path when one was given, else the configuration already in effect, else the platform path, so a first run still lands where it always did.
+- Fixed `toml::TomlConfig::target_path` naming the platform path while another default file is in effect.
+
+  A wizard writing there shadowed every account of an existing `$HOME/.<project>rc`. It now names the file in effect.
 
 ## [0.1.4] - 2026-08-14
 
@@ -51,17 +70,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Raised the minimum supported Rust version from 1.87 to 1.89.
 
-  The `notify` feature reaches `time` through notify-rust's macOS backend, and the release fixing RUSTSEC-2026-0009, a denial of service parsing hostile RFC 2822 input, needs 1.88. The crate settles on 1.89, the version the newest Pimalaya binaries already require.
+  The `notify` feature reaches `time`, whose RUSTSEC-2026-0009 fix needs 1.88.
 
 ## [0.1.3] - 2026-08-14
 
 ### Changed
 
-- Compiled the `notify` module unconditionally, so a consumer names `notify::Notification` and shows one with no `#[cfg]` of its own.
+- Changed the `notify` module to compile without the `notify` feature.
 
-  With the `notify` feature, that type is notify-rust's own and its `show` reaches the daemon. Without it, the type holds nothing, and reading one from a configuration, writing one back and showing one all fail with the same message, naming the `notify` cargo feature to rebuild with. A configuration naming a notification a build cannot send is refused as it loads, pointing at the offending table.
+  `notify::Notification` then holds nothing, and reading, writing or showing one fails with an error naming the feature.
 
-  serde became a non-optional dependency along the way, since the module needs it in every build.
+- Changed serde to a non-optional dependency.
 
 ## [0.1.2] - 2026-08-14
 
@@ -69,9 +88,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added the `notify` serde adapter, reading a `notify_rust::Notification` from a summary and a body.
 
-  It is the counterpart of the `command` adapter, and works the same way: `#[serde(with = "pimalaya_config::notify")]` on a field of that type reads `{ summary = "…", body = "…" }` and writes the same shape back, dropping an empty body. Both hand back a ready-to-use value of a foreign type and perform no I/O, so this crate builds the process and the notification while the caller runs and shows them. Expanding a template into a summary stays with the caller too, since which variables exist is its business.
-
-  It sits behind the `notify` feature, which pulls notify-rust with its D-Bus backend, the one every Pimalaya binary sending notifications already uses. That backend links against the system D-Bus, so the `vendored` feature forwards to notify-rust for the platforms lacking one.
+  It sits behind the `notify` feature. The `vendored` feature forwards to notify-rust for platforms without a system D-Bus.
 
 ## [0.1.1] - 2026-07-25
 
@@ -79,39 +96,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added `toml::to_string`, a TOML serializer tuned for wizard output.
 
-  It keeps the per-account tables (`[accounts.<name>]`) as the only table headers, flattens every other table into dotted keys (`imap.sasl.plain.username = …`), and drops empty tables.
+  Per-account tables are the only headers, every other table is flattened into dotted keys, and empty tables are dropped.
 
 ## [0.1.0] - 2026-07-16
 
 ### Changed
 
-- Migrated from toml 0.8 to toml 1.1. The `toml` feature now enables toml's own `serde` feature explicitly, which 1.x split out of its default set; parsing, `Value` handling and serialization are otherwise unchanged.
-- Dropped the `serde-toml-merge` dependency, inlining an equivalent deep-merge (scalars override, arrays concatenate, tables merge recursively, incompatible types error): the crate does not follow toml past 0.9, so it could not move to toml 1.x.
-- Relicensed under `MIT OR Apache-2.0`, adding the Apache-2.0 option next to the existing MIT license.
-- Gated the `anyhow` and `log` dependencies behind the `toml` feature, the only layer using them, so a `secret`-only build no longer pulls them in.
+- Changed the toml dependency from 0.8 to 1.1.
+- Replaced the `serde-toml-merge` dependency with an inlined deep-merge.
+- Relicensed under `MIT OR Apache-2.0`.
+- Gated the `anyhow` and `log` dependencies behind the `toml` feature.
 
 ### Fixed
 
-- Fixed `shell_expanded_string` and `shell_expanded_path` not expanding environment variables when the deserializer handed over a borrowed string: the visitor implemented only `visit_string`, so borrowed inputs fell through to the erroring default. It now expands on `visit_str`, covering both cases.
+- Fixed `toml::shell_expanded_string` and `toml::shell_expanded_path` failing on borrowed strings.
 
 ## [0.0.2] - 2026-07-13
 
+### Added
+
+- Added `command::shell`, building a platform-shell command.
+
 ### Changed
 
-- Reworked the `Command` serde adapter so a shell-form command round-trips as its bare command line string instead of the verbose `["/bin/sh", "-c", ...]` sequence; a program-plus-arguments command still round-trips as a string sequence.
-
-  Added the `shell` helper building a platform-shell command, so callers writing the command line themselves match the deserializer semantics.
+- Changed the `command` serde adapter to write a shell command back as its bare command line.
 
 ## [0.0.1] - 2026-06-06
 
 ### Added
 
-- Added the `TomlConfig` loader trait: reads and deep-merges a project's TOML configuration from explicit paths, falls back to the platform default locations, and distinguishes a missing file (mapped to `Ok(None)` to drive a wizard) from an unreadable one.
-- Added the `Secret` enum resolving a secret from a literal value or a shell command's standard output, lazily at use time.
-- Added the `command` serde adapter reading a `std::process::Command` from a shell line string or a program-plus-arguments list.
-- Added the `shell_expanded_string` and `shell_expanded_path` deserializers expanding environment variables in string and path config fields.
+- Added the `toml::TomlConfig` loader trait.
 
-[unreleased]: https://github.com/pimalaya/config/compare/v0.2.1..HEAD
+  It deep-merges TOML files from explicit or default paths, and maps a missing file to `Ok(None)` to drive a wizard.
+
+- Added `secret::Secret`, a literal value or a shell command output, resolved lazily.
+- Added the `command` serde adapter, reading a `std::process::Command` from a shell line or a program and its arguments.
+- Added `toml::shell_expanded_string` and `toml::shell_expanded_path`, expanding environment variables in config fields.
+
+[unreleased]: https://github.com/pimalaya/config/compare/v0.3.0..HEAD
+[0.3.0]: https://github.com/pimalaya/config/compare/v0.2.1..v0.3.0
 [0.2.1]: https://github.com/pimalaya/config/compare/v0.2.0..v0.2.1
 [0.2.0]: https://github.com/pimalaya/config/compare/v0.1.4..v0.2.0
 [0.1.4]: https://github.com/pimalaya/config/compare/v0.1.3..v0.1.4
