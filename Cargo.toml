@@ -25,7 +25,7 @@ vendored = ["notify-rust?/d_vendored"]
 
 [dependencies]
 anyhow = { version = "1", default-features = false, features = ["std"], optional = true }
-dirs = { version = "6.0", default-features = false, optional = true }
+dirs = { version = "7", default-features = false, optional = true }
 log = { version = "0.4", default-features = false, optional = true }
 notify-rust = { version = "4", default-features = false, optional = true }
 secrecy = { version = "0.10", default-features = false, features = ["serde"], optional = true }
