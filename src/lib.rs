@@ -36,12 +36,14 @@
 //! a field holding that runnable form directly.
 //!
 //! [`notify`] is its counterpart for desktop notifications, reading a
-//! [`Notification`] from a summary and a body. It is always compiled,
-//! so a consumer names that type and shows one with no `#[cfg]` of its
-//! own: what the `notify` feature decides is whether anything is behind
-//! it. With it, the type is notify-rust's own; without it, it holds
-//! nothing, and reading or showing one fails naming the cargo feature
-//! to rebuild with.
+//! [`Notification`] from a summary and a body, and a
+//! [`NotificationTemplate`] whose variables the caller fills when it
+//! shows it. It is always compiled, so a consumer names those types and
+//! shows one with no `#[cfg]` of its own: what the `notify` feature
+//! decides is whether anything is behind them. With it, the type is
+//! notify-rust's own; without it, it holds nothing, and reading,
+//! rendering or showing one fails naming the cargo feature to rebuild
+//! with.
 //!
 //! ## Conventions
 //!
@@ -61,6 +63,7 @@
 //! [`Secret`]: secret::Secret
 //! [`SecretResolver`]: secret::SecretResolver
 //! [`Notification`]: notify::Notification
+//! [`NotificationTemplate`]: notify::NotificationTemplate
 
 #[cfg(feature = "secret")]
 pub mod command;

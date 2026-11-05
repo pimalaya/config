@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `notify::NotificationTemplate`, a notification whose summary and body hold variables in the shell's syntax (`$name`, `${name}`, `${name:-default}`, `$$`).
+
+  It reads the table `notify::Notification` reads. `render` fills the variables through a lookup the caller gives, `check` refuses a variable the caller does not declare, and a malformed `${...}` is refused when the template is read.
+
 ## [0.3.0] - 2026-11-03
 
 ### Added

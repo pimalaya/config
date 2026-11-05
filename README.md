@@ -20,7 +20,7 @@ Config utils for Pimalaya
 - **TOML loader**: reads a project's TOML configuration from explicit paths or the default locations, deep-merging several files into one (the default ones as layers, `~/.<project>rc` on top) and telling a missing file apart from an unreadable one so callers can launch a wizard (requires `toml` feature).
 - **Secret resolution**: resolves a secret from a literal value or a shell command's standard output, evaluated lazily at the moment it is needed rather than cached (requires `secret` feature).
 - **Shell command deserialization**: a serde adapter reading a command as a shell line string or a program-plus-arguments list, writing either shape back unchanged.
-- **Desktop notification deserialization**: the same adapter shape for notifications, reading a summary and a body into a ready-to-show notification (requires `notify` feature).
+- **Desktop notification deserialization**: the same adapter shape for notifications, reading a summary and a body into a ready-to-show notification, or into a template expanding the shell's variable syntax with the values the caller supplies (requires `notify` feature).
 
 > [!TIP]
 > pimalaya-config is written in [Rust](https://www.rust-lang.org/) and uses [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to gate the loader and the secret resolver. The default feature set is declared in [Cargo.toml](./Cargo.toml) or on [docs.rs](https://docs.rs/crate/pimalaya-config/latest/features).
