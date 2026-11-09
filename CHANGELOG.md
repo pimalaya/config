@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   It reads the table `notify::Notification` reads. `render` fills the variables through a lookup the caller gives, `check` refuses a variable the caller does not declare, and a malformed `${...}` is refused when the template is read.
 
+### Changed
+
+- Changed the shell expansion of `toml::shell_expanded_string` and the path deserializers to take the home directory from dirs 7 rather than shellexpand's `tilde` feature, which pinned dirs 6: a binary carries one dirs version.
+
 ## [0.3.0] - 2026-11-03
 
 ### Added

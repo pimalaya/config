@@ -12,6 +12,7 @@
 
 use std::{
     borrow::Cow,
+    env,
     fmt::{self, Write as _},
     fs, io,
     path::{Path, PathBuf},
@@ -381,7 +382,12 @@ impl<'de> Visitor<'de> for ShellExpandedStringVisitor {
     }
 
     fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
-        match shellexpand::full(v) {
+        // NOTE: the home directory comes from dirs rather than shellexpand's
+        // tilde feature, which pins an older dirs. One that is not valid
+        // Unicode leaves the tilde as written, as that feature does.
+        let home = || home_dir()?.into_os_string().into_string().ok();
+
+        match shellexpand::full_with_context(v, home, |var| env::var(var).map(Some)) {
             Ok(v) => Ok(v.into_owned()),
             Err(_) => Ok(v.to_owned()),
         }
@@ -678,5 +684,35 @@ mod tests {
     fn incompatible_types_are_an_error() {
         let err = merge("a = 1\n", "a = \"x\"\n").unwrap_err();
         assert!(err.contains("incompatible types at `$.a`"), "{err}");
+    }
+
+    #[derive(Deserialize)]
+    struct Expanded {
+        #[serde(deserialize_with = "super::shell_expanded_string")]
+        s: String,
+    }
+
+    fn expand(s: &str) -> String {
+        toml::from_str::<Expanded>(&format!("s = {s:?}")).unwrap().s
+    }
+
+    #[test]
+    fn a_leading_tilde_expands_to_the_home_directory() {
+        let home = dirs::home_dir()
+            .unwrap()
+            .into_os_string()
+            .into_string()
+            .unwrap();
+        assert_eq!(expand("~/x"), format!("{home}/x"));
+        assert_eq!(expand("a/~/x"), "a/~/x");
+    }
+
+    #[test]
+    fn variables_expand_and_an_undefined_one_leaves_the_value_raw() {
+        let home = env::var("HOME").unwrap();
+        assert_eq!(expand("$HOME/x"), format!("{home}/x"));
+
+        let raw = "$PIMALAYA_CONFIG_UNDEFINED_VARIABLE/x";
+        assert_eq!(expand(raw), raw);
     }
 }
