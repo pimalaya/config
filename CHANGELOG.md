@@ -2,15 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
 ### Added
 
-- **BREAKING**: Added `toml::TomlConfig::sample_url`, the documented sample configuration a missing one points to.
-- **BREAKING**: Added `toml::TomlConfig::accounts`, every account name with whether it is marked default.
+- **BREAKING**: Added the required `toml::TomlConfig::sample_url`, the documented sample configuration a missing one points to.
+- **BREAKING**: Added the required `toml::TomlConfig::accounts`, every account name with whether it is marked default.
 - Added `toml::TomlConfig::load`, failing with a `toml::ConfigMissingError` when no configuration exists.
 
   The error names the path looked for, the first `-c` one or the default location, and the sample URL.
@@ -26,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **BREAKING**: Removed `toml::TomlConfig::take_default_account`, the trait finding the default through `accounts`.
+- **BREAKING**: Removed the required `toml::TomlConfig::take_default_account`: `take_account` finds the default through `accounts`.
 - **BREAKING**: Removed `toml::to_string`, the compact serializer of the wizards.
 
 ## [0.3.1] - 2026-11-11

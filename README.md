@@ -20,7 +20,7 @@ Config utils for Pimalaya
 - **TOML loader**: reads a project's TOML configuration from explicit paths or the default locations, deep-merging several files into one (the default ones as layers, `~/.<project>rc` on top) and telling a missing file, reported with the path looked for and the sample configuration to start from, apart from an unreadable one (requires `toml` feature).
 - **Account resolution**: takes the named or default account, an unknown name listing the accounts the configuration holds and a missing or ambiguous default saying how to pick one (requires `toml` feature).
 - **Secret resolution**: resolves a secret from a literal value or a shell command's standard output, evaluated lazily at the moment it is needed rather than cached (requires `secret` feature).
-- **Shell command deserialization**: a serde adapter reading a command as a shell line string or a program-plus-arguments list, writing either shape back unchanged.
+- **Shell command deserialization**: a serde adapter reading a command as a shell line string or a program-plus-arguments list, writing either shape back unchanged (requires `secret` feature).
 - **Desktop notification deserialization**: the same adapter shape for notifications, reading a summary and a body into a ready-to-show notification, or into a template expanding the shell's variable syntax with the values the caller supplies (requires `notify` feature).
 - **Sample configuration variants**: for a test, every variant a user may write from a documented sample configuration, each provider section uncommented, then each option on top of it (requires `sample` feature, meant for dev-dependencies).
 
