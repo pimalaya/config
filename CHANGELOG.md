@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-11
+
 ### Added
 
 - **BREAKING**: Added the required `toml::TomlConfig::sample_url`, the documented sample configuration a missing one points to.
@@ -166,7 +168,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Added the `command` serde adapter, reading a `std::process::Command` from a shell line or a program and its arguments.
 - Added `toml::shell_expanded_string` and `toml::shell_expanded_path`, expanding environment variables in config fields.
 
-[unreleased]: https://github.com/pimalaya/config/compare/v0.3.1..HEAD
+[unreleased]: https://github.com/pimalaya/config/compare/v0.4.0..HEAD
+[0.4.0]: https://github.com/pimalaya/config/compare/v0.3.1..v0.4.0
 [0.3.1]: https://github.com/pimalaya/config/compare/v0.3.0..v0.3.1
 [0.3.0]: https://github.com/pimalaya/config/compare/v0.2.1..v0.3.0
 [0.2.1]: https://github.com/pimalaya/config/compare/v0.2.0..v0.2.1
