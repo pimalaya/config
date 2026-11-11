@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **BREAKING**: Added `toml::TomlConfig::sample_url`, the documented sample configuration a missing one points to.
+- **BREAKING**: Added `toml::TomlConfig::accounts`, every account name with whether it is marked default.
+- Added `toml::TomlConfig::load`, failing with a `toml::ConfigMissingError` when no configuration exists.
+
+  The error names the path looked for, the first `-c` one or the default location, and the sample URL.
+
+- Added `toml::AccountError`, the unknown, missing default and several default accounts `toml::TomlConfig::take_account` refuses.
+- Added the `sample` cargo feature and `sample::variants`, the variants a user may write from a documented sample configuration, for its tests.
+
+### Changed
+
+- **BREAKING**: Changed `toml::TomlConfig::take_account` to answer the account or a `toml::AccountError`, never `Ok(None)`.
+
+  An unknown name lists the accounts the configuration holds, sorted, and several accounts marked default are refused rather than one picked at random.
+
+### Removed
+
+- **BREAKING**: Removed `toml::TomlConfig::take_default_account`, the trait finding the default through `accounts`.
+- **BREAKING**: Removed `toml::to_string`, the compact serializer of the wizards.
+
 ## [0.3.1] - 2026-11-11
 
 ### Added

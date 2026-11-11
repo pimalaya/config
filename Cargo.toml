@@ -19,8 +19,9 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = ["toml", "secret", "notify"]
 notify = ["dep:notify-rust", "notify-rust/d"]
+sample = []
 secret = ["dep:log", "dep:secrecy", "dep:thiserror"]
-toml = ["dep:anyhow", "dep:dirs", "dep:log", "dep:shellexpand", "dep:toml"]
+toml = ["dep:anyhow", "dep:dirs", "dep:log", "dep:shellexpand", "dep:thiserror", "dep:toml"]
 vendored = ["notify-rust?/d_vendored"]
 
 [dependencies]
@@ -32,4 +33,7 @@ secrecy = { version = "0.10", default-features = false, features = ["serde"], op
 serde = { version = "1", default-features = false, features = ["derive", "std"] }
 shellexpand = { version = "3.1", default-features = false, features = ["base-0"], optional = true }
 thiserror = { version = "2", default-features = false, features = ["std"], optional = true }
-toml = { version = "1.1", default-features = false, features = ["std", "parse", "display", "serde"], optional = true }
+toml = { version = "1.1", default-features = false, features = ["std", "parse", "serde"], optional = true }
+
+[dev-dependencies]
+toml = { version = "1.1", default-features = false, features = ["std", "parse", "display", "serde"] }

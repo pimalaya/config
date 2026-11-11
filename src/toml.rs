@@ -1,35 +1,33 @@
-//! TOML configuration loading, merging and shell expansion.
+//! TOML configuration loading, merging, account resolution and shell
+//! expansion.
 //!
 //! [`TomlConfig`] is the loader trait: it reads a project's TOML config
 //! from explicit paths or the default locations, deep-merges several
-//! files into one (the default ones as layers, the rc file on top), and
-//! maps a missing file to `Ok(None)` so callers can launch a wizard.
-//! [`to_string`] is the matching serializer, emitting a compact document
-//! a wizard can print. The
-//! [`shell_expanded_string`], [`shell_expanded_path`] and
-//! [`opt_shell_expanded_path`] deserializers expand environment variables
-//! in string and path config fields.
+//! files into one (the default ones as layers, the rc file on top),
+//! reports a missing one as a [`ConfigMissingError`], and takes the
+//! account a command runs against, failing with an [`AccountError`]
+//! that says how to pick one. The [`shell_expanded_string`],
+//! [`shell_expanded_path`] and [`opt_shell_expanded_path`] deserializers
+//! expand environment variables in string and path config fields.
 
 use std::{
-    borrow::Cow,
-    env,
-    fmt::{self, Write as _},
-    fs, io,
+    env, fmt, fs, io,
     path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result, bail};
 use dirs::{config_dir, home_dir};
 use log::debug;
-use serde::{Deserialize, Deserializer, Serialize, de::Visitor};
+use serde::{Deserialize, Deserializer, de::Visitor};
+use thiserror::Error;
 use toml::Value;
 
 /// A deserializable TOML configuration exposing named accounts.
 ///
 /// Consumers implement it on their own config type to inherit the
-/// loading, deep-merging and default-path resolution provided by the
-/// default methods; only the project name and the account accessors are
-/// left to the implementor.
+/// loading, deep-merging, default-path and account resolution provided
+/// by the default methods; only the project name, the sample URL and
+/// the account accessors are left to the implementor.
 pub trait TomlConfig: for<'de> Deserialize<'de> {
     /// The per-account configuration this config holds.
     type Account;
@@ -38,24 +36,65 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
     /// (`<project>/config.toml`, `.<project>rc`).
     fn project_name() -> &'static str;
 
-    /// Takes the account marked as default, if any.
-    fn take_default_account(&mut self) -> Option<(String, Self::Account)>;
+    /// The URL of the documented sample configuration, which a
+    /// [`ConfigMissingError`] points to.
+    fn sample_url() -> &'static str;
+
+    /// The name of every account, each with whether it is marked default.
+    fn accounts(&self) -> impl Iterator<Item = (&str, bool)>;
 
     /// Takes the account registered under `name`, if any.
     fn take_named_account(&mut self, name: &str) -> Option<(String, Self::Account)>;
 
-    /// Takes the default account when `name` is empty, `"default"` or
-    /// absent, the named account otherwise.
+    /// Takes the account named `name`, or the one marked default when
+    /// `name` is absent, empty or `"default"`.
     ///
-    /// Returns an error when a name is given but no matching account
-    /// exists.
-    fn take_account(&mut self, name: Option<&str>) -> Result<Option<(String, Self::Account)>> {
-        match name {
-            Some("default") | Some("") | None => Ok(self.take_default_account()),
-            Some(name) => match self.take_named_account(name) {
-                None => bail!("Get account `{name}` error"),
-                account => Ok(account),
-            },
+    /// Fails when no account has that name, listing the ones the
+    /// configuration holds, and when no account or several are marked
+    /// default.
+    fn take_account(
+        &mut self,
+        name: Option<&str>,
+    ) -> Result<(String, Self::Account), AccountError> {
+        let name = match name.filter(|name| !name.is_empty() && *name != "default") {
+            Some(name) => name.to_owned(),
+            None => {
+                let defaults = self.accounts().filter(|(_, default)| *default);
+                let mut defaults = sorted(defaults.map(|(name, _)| name));
+
+                if defaults.len() > 1 {
+                    return Err(AccountError::SeveralDefaults(defaults));
+                }
+
+                defaults.pop().ok_or(AccountError::NoDefault)?
+            }
+        };
+
+        match self.take_named_account(&name) {
+            Some(account) => Ok(account),
+            None => {
+                let names = sorted(self.accounts().map(|(name, _)| name));
+                Err(AccountError::Missing { name, names })
+            }
+        }
+    }
+
+    /// Loads the configuration as [`from_paths_or_default`] does, a
+    /// missing one failing with a [`ConfigMissingError`].
+    ///
+    /// The error names the [`target_path`] and the [`sample_url`].
+    ///
+    /// [`from_paths_or_default`]: Self::from_paths_or_default
+    /// [`target_path`]: Self::target_path
+    /// [`sample_url`]: Self::sample_url
+    fn load(paths: &[PathBuf]) -> Result<Self> {
+        match Self::from_paths_or_default(paths)? {
+            Some(config) => Ok(config),
+            None => {
+                let path = Self::target_path(paths)?;
+                let sample_url = Self::sample_url();
+                Err(ConfigMissingError { path, sample_url }.into())
+            }
         }
     }
 
@@ -102,17 +141,12 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
     /// Loads the configuration from `paths` if any are given, falling
     /// back to the default paths otherwise.
     ///
-    /// Returns:
+    /// Answers `Ok(None)` when the first explicit path does not exist,
+    /// or when none is given and no default path exists: [`load`] turns
+    /// it into a [`ConfigMissingError`]. Any other I/O error, a file
+    /// that exists but cannot be read included, is an `Err`.
     ///
-    /// - `Err` on parse errors or non-`NotFound` I/O errors (notably
-    ///   `PermissionDenied`: those should not be silently treated as
-    ///   "no config" because a brand-new wizard run could overwrite a
-    ///   pre-existing but unreadable file).
-    /// - `Ok(None)` when no config file is found (paths empty + no
-    ///   default exists, or an explicit path that does not exist on
-    ///   disk). Callers can use this signal to launch a wizard or
-    ///   bail with their own message.
-    /// - `Ok(Some(config))` on success.
+    /// [`load`]: Self::load
     fn from_paths_or_default(paths: &[PathBuf]) -> Result<Option<Self>> {
         match paths.first() {
             None => Self::from_default_paths(),
@@ -141,18 +175,10 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
         Self::from_paths(&paths).map(Some)
     }
 
-    /// Returns the path a configuration should be written to: the first
-    /// explicit path when one was given, else the base layer of the
-    /// configuration in effect, else the platform default. Used by
-    /// callers to drive wizard targeting, whether or not a configuration
-    /// exists.
-    ///
-    /// The base layer is the lowest-precedence file, so a write there
-    /// can be overridden by a later layer: a caller appending an account
-    /// checks its name against the merged configuration
-    /// ([`from_paths_or_default`]), not against the target file alone.
-    ///
-    /// [`from_paths_or_default`]: Self::from_paths_or_default
+    /// Returns the path the configuration is read from, or reported
+    /// missing at: the first explicit path when one was given, else the
+    /// base layer of the configuration in effect, else the platform
+    /// default.
     fn target_path(paths: &[PathBuf]) -> Result<PathBuf> {
         if let Some(path) = paths.first() {
             return Ok(path.clone());
@@ -205,86 +231,39 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
     }
 }
 
-/// Serializes a config value to a compact TOML document tuned for a
-/// wizard's output: the per-account tables (`[accounts.<name>]`) are the
-/// only table headers, and every nested table is flattened into dotted
-/// keys (`imap.sasl.plain.username = …`) rather than sub-headers or
-/// inline `{ … }` tables. Arrays and scalars render on one line
-/// (`imap.alpn = ["imap"]`). Empty tables produce nothing.
-///
-/// The `accounts` convention is shared by every Pimalaya CLI, so the
-/// only headers are the account entries; a value carrying no `accounts`
-/// table comes out as a flat list of dotted keys.
-pub fn to_string<T: Serialize>(value: &T) -> Result<String> {
-    let value = Value::try_from(value).context("Serialize TOML value error")?;
-
-    let Value::Table(root) = &value else {
-        return Ok(value.to_string());
-    };
-
-    let mut out = String::new();
-
-    // Root entries other than the accounts render as dotted keys up top.
-    for (key, item) in root.iter() {
-        if key == "accounts" {
-            continue;
-        }
-
-        emit(&mut out, bare_or_quoted(key).as_ref(), item);
-    }
-
-    // Each account becomes an `[accounts.<name>]` header, the only table
-    // header in the output; its fields render as dotted keys below it.
-    if let Some(Value::Table(accounts)) = root.get("accounts") {
-        for (name, account) in accounts.iter() {
-            if !out.is_empty() {
-                let _ = writeln!(out);
-            }
-
-            let _ = writeln!(out, "[accounts.{}]", bare_or_quoted(name));
-
-            if let Value::Table(fields) = account {
-                for (key, item) in fields.iter() {
-                    emit(&mut out, bare_or_quoted(key).as_ref(), item);
-                }
-            }
-        }
-    }
-
-    Ok(out)
+/// No configuration file at the path [`TomlConfig::load`] looked for.
+#[derive(Debug, Error)]
+#[error("No configuration found at {path}, start from the sample: {sample_url}")]
+pub struct ConfigMissingError {
+    /// The first explicit path, or the default location when none was
+    /// given, so a mistyped path shows up as itself.
+    pub path: PathBuf,
+    /// The URL of the documented sample configuration.
+    pub sample_url: &'static str,
 }
 
-/// Writes a config entry rooted at `key`: a nested table is flattened
-/// into dotted keys (recursing so `a.b.c = …`), while a scalar or array
-/// renders on a single line through the inline `Display` of
-/// [`toml::Value`]. An empty table writes nothing.
-fn emit(out: &mut String, key: &str, item: &Value) {
-    match item {
-        Value::Table(table) => {
-            for (sub_key, sub_item) in table.iter() {
-                let dotted = format!("{key}.{}", bare_or_quoted(sub_key));
-                emit(out, &dotted, sub_item);
-            }
-        }
-        value => {
-            let _ = writeln!(out, "{key} = {value}");
-        }
-    }
-}
-
-/// Renders a table key bare when it is a valid TOML bare key (ASCII
-/// alphanumerics, `-` and `_`), quoting it as a basic string otherwise.
-fn bare_or_quoted(key: &str) -> Cow<'_, str> {
-    let bare = !key.is_empty()
-        && key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
-
-    if bare {
-        Cow::Borrowed(key)
-    } else {
-        Cow::Owned(format!("{key:?}"))
-    }
+/// The account [`TomlConfig::take_account`] could not take.
+#[derive(Debug, Error)]
+pub enum AccountError {
+    /// No account has the requested name.
+    #[error("Account `{name}` not found, the configuration holds{}", held(names))]
+    Missing {
+        /// The requested name.
+        name: String,
+        /// The names the configuration holds, sorted.
+        names: Vec<String>,
+    },
+    /// No account is marked default, and none was named.
+    #[error(
+        "No default account found, name one with `-a <NAME>` or mark one with `default = true`"
+    )]
+    NoDefault,
+    /// Several accounts are marked default, sorted, and none was named.
+    #[error(
+        "Several accounts are marked default ({}), keep `default = true` on one, or name one with `-a <NAME>`",
+        .0.join(", ")
+    )]
+    SeveralDefaults(Vec<String>),
 }
 
 /// Deep-merges the `other` TOML value into `base`, at the given dotted
@@ -372,6 +351,23 @@ fn path_status(path: &Path) -> Result<PathStatus> {
     }
 }
 
+/// The accounts a configuration holds, as an unknown-account error reads
+/// them after "holds": `: a, b`, or ` no account`.
+fn held(names: &[String]) -> String {
+    match names {
+        [] => String::from(" no account"),
+        names => format!(": {}", names.join(", ")),
+    }
+}
+
+/// The account names, owned and sorted: a configuration's accounts sit
+/// in a map whose order may change from run to run.
+fn sorted<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let mut names: Vec<String> = names.map(String::from).collect();
+    names.sort_unstable();
+    names
+}
+
 struct ShellExpandedStringVisitor;
 
 impl<'de> Visitor<'de> for ShellExpandedStringVisitor {
@@ -427,12 +423,18 @@ pub fn opt_shell_expanded_path<'de, D: Deserializer<'de>>(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, env, fs, path::PathBuf, process};
+    use std::{
+        collections::{BTreeMap, HashMap},
+        env, fs, iter,
+        path::PathBuf,
+        process, slice,
+    };
 
+    use anyhow::Result;
     use serde::Deserialize;
     use toml::Value;
 
-    use super::TomlConfig;
+    use crate::toml::{AccountError, ConfigMissingError, TomlConfig, existing_once, merge_toml};
 
     fn doc(s: &str) -> Value {
         toml::from_str(s).unwrap()
@@ -444,6 +446,8 @@ mod tests {
     const RC: &str = "/home/u/.testrc";
     const PLATFORM: &str = "/home/u/.config/test/config.toml";
 
+    const SAMPLE_URL: &str = "https://example.org/config.sample.toml";
+
     #[derive(Deserialize)]
     struct Configured;
 
@@ -454,8 +458,12 @@ mod tests {
             "test"
         }
 
-        fn take_default_account(&mut self) -> Option<(String, Self::Account)> {
-            None
+        fn sample_url() -> &'static str {
+            SAMPLE_URL
+        }
+
+        fn accounts(&self) -> impl Iterator<Item = (&str, bool)> {
+            iter::empty()
         }
 
         fn take_named_account(&mut self, _name: &str) -> Option<(String, Self::Account)> {
@@ -466,7 +474,7 @@ mod tests {
             vec![PathBuf::from(RC)]
         }
 
-        fn default_path() -> anyhow::Result<PathBuf> {
+        fn default_path() -> Result<PathBuf> {
             Ok(PathBuf::from(PLATFORM))
         }
     }
@@ -481,8 +489,12 @@ mod tests {
             "test"
         }
 
-        fn take_default_account(&mut self) -> Option<(String, Self::Account)> {
-            None
+        fn sample_url() -> &'static str {
+            SAMPLE_URL
+        }
+
+        fn accounts(&self) -> impl Iterator<Item = (&str, bool)> {
+            iter::empty()
         }
 
         fn take_named_account(&mut self, _name: &str) -> Option<(String, Self::Account)> {
@@ -493,15 +505,15 @@ mod tests {
             Vec::new()
         }
 
-        fn default_path() -> anyhow::Result<PathBuf> {
+        fn default_path() -> Result<PathBuf> {
             Ok(PathBuf::from(PLATFORM))
         }
     }
 
-    /// A project configured through its rc file alone gets its writes
-    /// there, not in a new platform file holding one account.
+    /// A project configured through its rc file alone is read there, not
+    /// in a platform file that does not exist.
     #[test]
-    fn a_write_targets_the_configuration_being_read() {
+    fn the_target_is_the_configuration_being_read() {
         let target = Configured::target_path(&[]).expect("resolve the target path");
 
         assert_eq!(target, PathBuf::from(RC));
@@ -514,13 +526,24 @@ mod tests {
         assert_eq!(target, PathBuf::from(PLATFORM));
     }
 
+    #[test]
+    fn a_first_run_is_a_configuration_missing_at_the_platform_path() {
+        let err = Unconfigured::load(&[])
+            .err()
+            .expect("find no configuration");
+        let err = err.downcast::<ConfigMissingError>().expect("a missing one");
+
+        assert_eq!(err.path, PathBuf::from(PLATFORM));
+        assert_eq!(err.sample_url, SAMPLE_URL);
+    }
+
     /// An explicit path names the file the run is about, so it wins over
     /// both defaults whether or not it exists yet.
     #[test]
     fn an_explicit_path_wins_over_both_defaults() {
         let explicit = PathBuf::from("/tmp/elsewhere.toml");
-        let target = Configured::target_path(std::slice::from_ref(&explicit))
-            .expect("resolve the target path");
+        let target =
+            Configured::target_path(slice::from_ref(&explicit)).expect("resolve the target path");
 
         assert_eq!(target, explicit);
     }
@@ -556,8 +579,12 @@ mod tests {
             "test"
         }
 
-        fn take_default_account(&mut self) -> Option<(String, Self::Account)> {
-            None
+        fn sample_url() -> &'static str {
+            SAMPLE_URL
+        }
+
+        fn accounts(&self) -> impl Iterator<Item = (&str, bool)> {
+            iter::empty()
         }
 
         fn take_named_account(&mut self, _name: &str) -> Option<(String, Self::Account)> {
@@ -608,7 +635,7 @@ mod tests {
         let rc = dir.join(".testrc");
         fs::write(&rc, "").unwrap();
 
-        let paths = super::existing_once(vec![dir.join("config.toml"), rc.clone()]);
+        let paths = existing_once(vec![dir.join("config.toml"), rc.clone()]);
         assert_eq!(paths, vec![rc]);
 
         fs::remove_dir_all(dir).unwrap();
@@ -625,41 +652,162 @@ mod tests {
         fs::write(&platform, "xs = [1]\n").unwrap();
         std::os::unix::fs::symlink(&platform, &rc).unwrap();
 
-        let paths = super::existing_once(vec![platform.clone(), platform.clone(), rc]);
+        let paths = existing_once(vec![platform.clone(), platform.clone(), rc]);
         assert_eq!(paths, vec![platform]);
 
         fs::remove_dir_all(dir).unwrap();
     }
 
-    fn merge(base: &str, other: &str) -> Result<Value, String> {
-        super::merge_toml(doc(base), doc(other), "$").map_err(|err| err.to_string())
+    /// Accounts as a project holds them, in a map whose order changes
+    /// from run to run.
+    #[derive(Debug, Deserialize)]
+    struct Accounts {
+        accounts: HashMap<String, Account>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Account {
+        #[serde(default)]
+        default: bool,
+    }
+
+    impl TomlConfig for Accounts {
+        type Account = Account;
+
+        fn project_name() -> &'static str {
+            "test"
+        }
+
+        fn sample_url() -> &'static str {
+            SAMPLE_URL
+        }
+
+        fn accounts(&self) -> impl Iterator<Item = (&str, bool)> {
+            let accounts = self.accounts.iter();
+            accounts.map(|(name, account)| (name.as_str(), account.default))
+        }
+
+        fn take_named_account(&mut self, name: &str) -> Option<(String, Self::Account)> {
+            self.accounts.remove_entry(name)
+        }
+    }
+
+    fn accounts(toml: &str) -> Accounts {
+        toml::from_str(toml).unwrap()
+    }
+
+    /// A mistyped `-c` path shows up as itself, not as a first run.
+    #[test]
+    fn a_missing_explicit_path_is_a_missing_configuration() {
+        let dir = scratch_dir("explicit");
+        let path = dir.join("typo.toml");
+
+        let err = Accounts::load(slice::from_ref(&path)).expect_err("find no configuration");
+        let err = err.downcast::<ConfigMissingError>().expect("a missing one");
+
+        assert_eq!(err.path, path);
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "No configuration found at {}, start from the sample: {SAMPLE_URL}",
+                path.display(),
+            ),
+        );
+
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn to_string_keeps_only_account_headers_and_dots_the_rest() {
-        let value = doc("[table]\n\
-             [accounts.work]\n\
-             default = true\n\
-             [accounts.work.imap]\n\
-             server = \"x\"\n\
-             alpn = [\"imap\"]\n\
-             [accounts.work.imap.sort]\n");
+    fn a_later_explicit_path_missing_is_skipped() {
+        let dir = scratch_dir("later");
+        let base = dir.join("base.toml");
+        fs::write(&base, "[accounts.a]\n").unwrap();
 
-        let got = super::to_string(&value).unwrap();
+        let mut config = Accounts::load(&[base, dir.join("typo.toml")]).expect("load the base");
+        let (name, _) = config.take_account(Some("a")).expect("take the account");
+        assert_eq!(name, "a");
 
-        // Empty `[table]` and `[…sort]` produce nothing; `imap` is
-        // flattened into dotted keys; only the account is a header.
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_named_account_is_taken_whether_default_or_not() {
+        let toml = "[accounts.a]\n[accounts.b]\ndefault = true\n";
+
+        for name in ["a", "b"] {
+            let (taken, _) = accounts(toml).take_account(Some(name)).unwrap();
+            assert_eq!(taken, name);
+        }
+    }
+
+    #[test]
+    fn no_name_an_empty_one_and_default_take_the_default_account() {
+        let toml = "[accounts.a]\n[accounts.b]\ndefault = true\n";
+
+        for name in [None, Some(""), Some("default")] {
+            let (taken, _) = accounts(toml).take_account(name).unwrap();
+            assert_eq!(taken, "b", "{name:?}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_account_lists_the_ones_held_sorted() {
+        let mut config = accounts("[accounts.c]\n[accounts.a]\n[accounts.b]\n");
+
+        let err = config.take_account(Some("x")).unwrap_err();
+
+        assert!(
+            matches!(&err, AccountError::Missing { name, names } if name == "x" && names == &["a", "b", "c"]),
+            "{err:?}",
+        );
         assert_eq!(
-            got,
-            "[accounts.work]\ndefault = true\nimap.alpn = [\"imap\"]\nimap.server = \"x\"\n",
+            err.to_string(),
+            "Account `x` not found, the configuration holds: a, b, c",
+        );
+
+        let err = accounts("[accounts]\n")
+            .take_account(Some("x"))
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Account `x` not found, the configuration holds no account",
         );
     }
 
     #[test]
-    fn to_string_quotes_non_bare_account_names() {
-        let value = doc("[accounts.\"work mail\"]\ndefault = true\n");
-        let got = super::to_string(&value).unwrap();
-        assert_eq!(got, "[accounts.\"work mail\"]\ndefault = true\n");
+    fn no_default_account_names_both_ways_to_pick_one() {
+        let err = accounts("[accounts.a]\n").take_account(None).unwrap_err();
+
+        assert!(matches!(err, AccountError::NoDefault), "{err:?}");
+        assert_eq!(
+            err.to_string(),
+            "No default account found, name one with `-a <NAME>` or mark one with `default = true`",
+        );
+    }
+
+    /// The map yields several defaults in no stable order, so picking the
+    /// first would change the account from run to run.
+    #[test]
+    fn several_defaults_are_refused_naming_them_sorted() {
+        let mut config =
+            accounts("[accounts.c]\ndefault = true\n[accounts.b]\n[accounts.a]\ndefault = true\n");
+
+        let err = config.take_account(None).unwrap_err();
+
+        assert!(
+            matches!(&err, AccountError::SeveralDefaults(names) if names == &["a", "c"]),
+            "{err:?}",
+        );
+        assert_eq!(
+            err.to_string(),
+            "Several accounts are marked default (a, c), keep `default = true` on one, \
+             or name one with `-a <NAME>`",
+        );
+        assert_eq!(config.accounts.len(), 3);
+    }
+
+    fn merge(base: &str, other: &str) -> Result<Value, String> {
+        merge_toml(doc(base), doc(other), "$").map_err(|err| err.to_string())
     }
 
     #[test]
@@ -688,7 +836,7 @@ mod tests {
 
     #[derive(Deserialize)]
     struct Expanded {
-        #[serde(deserialize_with = "super::shell_expanded_string")]
+        #[serde(deserialize_with = "crate::toml::shell_expanded_string")]
         s: String,
     }
 

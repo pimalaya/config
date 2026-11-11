@@ -18,11 +18,18 @@
 //! [`toml`] (`toml` feature) holds the [`TomlConfig`] loader trait:
 //! it reads and deep-merges a project's TOML configuration from
 //! explicit paths, falls back to the default locations layered over
-//! one another (the rc file overriding the platform one), and
-//! tells a missing file (mapped to `Ok(None)` to drive a wizard) apart
-//! from an unreadable one. The module also carries the
-//! [`shell_expanded_string`] and [`shell_expanded_path`] deserializers
-//! expanding environment variables in string and path config fields.
+//! one another (the rc file overriding the platform one), tells a
+//! missing file, a [`ConfigMissingError`] naming the path looked for
+//! and the sample to start from, apart from an unreadable one, and
+//! takes the named or default account, an [`AccountError`] saying how
+//! to pick one. The module also carries the [`shell_expanded_string`]
+//! and [`shell_expanded_path`] deserializers expanding environment
+//! variables in string and path config fields.
+//!
+//! [`sample`] (`sample` feature, for dev-dependencies) builds the
+//! variants of a documented sample configuration a user may write, each
+//! provider section uncommented, then each option on top of it, for a
+//! test to parse them all.
 //!
 //! [`secret`] (`secret` feature) holds the [`Secret`] enum resolving a
 //! secret from a literal value or a shell command's standard output,
@@ -57,6 +64,8 @@
 //! namespace its public items.
 //!
 //! [`TomlConfig`]: toml::TomlConfig
+//! [`ConfigMissingError`]: toml::ConfigMissingError
+//! [`AccountError`]: toml::AccountError
 //! [`shell_expanded_string`]: toml::shell_expanded_string
 //! [`shell_expanded_path`]: toml::shell_expanded_path
 //! [`CommandConfig`]: command::CommandConfig
@@ -68,6 +77,8 @@
 #[cfg(feature = "secret")]
 pub mod command;
 pub mod notify;
+#[cfg(feature = "sample")]
+pub mod sample;
 #[cfg(feature = "secret")]
 pub mod secret;
 #[cfg(feature = "toml")]
