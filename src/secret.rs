@@ -11,7 +11,12 @@
 //! them, so a command named by several fields is spawned once for the
 //! whole account.
 
-use std::{collections::HashMap, io, process::Stdio, time::Instant};
+use std::{
+    collections::HashMap,
+    io::{self, IsTerminal},
+    process::Stdio,
+    time::Instant,
+};
 
 use log::{debug, trace};
 use secrecy::{ExposeSecret, SecretString};
@@ -74,11 +79,15 @@ impl Secret {
                 debug!("resolving secret command");
                 trace!("program: {}", cmd.get_program().to_string_lossy());
 
+                // NOTE: piped input belongs to the caller, never the command
+                let stdin = if io::stdin().is_terminal() {
+                    Stdio::inherit()
+                } else {
+                    Stdio::null()
+                };
+
                 let start = Instant::now();
-                let output = cmd
-                    .stdin(Stdio::null())
-                    .output()
-                    .map_err(SecretError::Spawn)?;
+                let output = cmd.stdin(stdin).output().map_err(SecretError::Spawn)?;
 
                 if !output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout);

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed the secret command not reading the terminal, which hung commands prompting for a password ([pimalaya/config#2](https://github.com/pimalaya/config/issues/2)).
+
 ## [0.4.0] - 2026-11-11
 
 ### Added
