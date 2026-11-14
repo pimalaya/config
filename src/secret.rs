@@ -34,7 +34,10 @@ pub enum SecretError {
     /// Waiting for the secret command to exit failed.
     #[error("Wait secret command error")]
     Wait(#[source] io::Error),
-    /// The secret command failed; the payload carries only its exit status.
+    /// The secret command exited with a non-zero status; the payload
+    /// carries its trimmed standard error, or its program and exit status
+    /// when it wrote none, never its standard output, which holds the
+    /// secret.
     #[error("Secret command error: {0}")]
     Output(String),
 }
@@ -88,7 +91,19 @@ impl Secret {
                 let output = cmd.stdin(stdin).output().map_err(SecretError::Spawn)?;
 
                 if !output.status.success() {
-                    return Err(SecretError::Output(output.status.to_string()));
+                    // NOTE: a command failing after printing the secret
+                    // would leak it, and a lookup missing its entry
+                    // (`secret-tool`, `security`) writes no error at all.
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let err = match stderr.trim() {
+                        "" => {
+                            let program = cmd.get_program().to_string_lossy();
+                            format!("{program} failed with {}", output.status)
+                        }
+                        err => err.to_owned(),
+                    };
+
+                    return Err(SecretError::Output(err));
                 }
 
                 let secret = String::from_utf8_lossy(&output.stdout);
@@ -180,19 +195,20 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_helper_never_exposes_stdout_or_stderr() {
-        for line in [
-            "printf SECRET_STDOUT_MARKER; printf SECRET_STDERR_MARKER >&2; exit 7",
-            "printf SECRET_STDERR_MARKER >&2; exit 7",
-            "exit 7",
+    fn a_failed_helper_never_exposes_its_stdout() {
+        for (line, expected) in [
+            (
+                "printf SECRET_MARKER; printf locked >&2; exit 7",
+                "Secret command error: locked",
+            ),
+            (
+                "printf SECRET_MARKER; exit 7",
+                "Secret command error: /bin/sh failed with exit status: 7",
+            ),
         ] {
             let err = shell(line).get().unwrap_err();
-            assert!(matches!(err, crate::secret::SecretError::Output(_)));
-            let displayed = err.to_string();
-            let debug = format!("{err:?}");
-            assert!(displayed.contains('7'));
-            assert!(!displayed.contains("SECRET_"));
-            assert!(!debug.contains("SECRET_"));
+            assert_eq!(err.to_string(), expected);
+            assert!(!format!("{err:?}").contains("SECRET_MARKER"));
         }
     }
 
@@ -251,7 +267,7 @@ mod tests {
 
         assert!(
             err.to_string()
-                .starts_with("Secret command error: false printed nothing, ")
+                .starts_with("Secret command error: false failed with ")
         );
     }
 
