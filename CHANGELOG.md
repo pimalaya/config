@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed a failing secret command exposing its standard output, where the secret comes out, through `SecretError`: the error now carries its standard error, or its program and exit status when it wrote none ([pimalaya/config#1](https://github.com/pimalaya/config/pull/1)).
+
 ## [0.4.1] - 2026-11-13
 
 ### Fixed

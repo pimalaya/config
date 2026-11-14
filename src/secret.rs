@@ -35,8 +35,9 @@ pub enum SecretError {
     #[error("Wait secret command error")]
     Wait(#[source] io::Error),
     /// The secret command exited with a non-zero status; the payload
-    /// carries its trimmed standard output or error, or its program and
-    /// exit status when it printed nothing.
+    /// carries its trimmed standard error, or its program and exit status
+    /// when it wrote none, never its standard output, which holds the
+    /// secret.
     #[error("Secret command error: {0}")]
     Output(String),
 }
@@ -90,18 +91,16 @@ impl Secret {
                 let output = cmd.stdin(stdin).output().map_err(SecretError::Spawn)?;
 
                 if !output.status.success() {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    // NOTE: a command failing after printing the secret
+                    // would leak it, and a lookup missing its entry
+                    // (`secret-tool`, `security`) writes no error at all.
                     let stderr = String::from_utf8_lossy(&output.stderr);
-
-                    // NOTE: a lookup missing its entry (`secret-tool`,
-                    // `security`) exits silently, which alone would leave
-                    // the error blank.
-                    let err = match (stdout.trim(), stderr.trim()) {
-                        ("", "") => {
+                    let err = match stderr.trim() {
+                        "" => {
                             let program = cmd.get_program().to_string_lossy();
-                            format!("{program} printed nothing, {}", output.status)
+                            format!("{program} failed with {}", output.status)
                         }
-                        ("", err) | (err, _) => err.to_owned(),
+                        err => err.to_owned(),
                     };
 
                     return Err(SecretError::Output(err));
@@ -196,6 +195,32 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_helper_never_exposes_its_stdout() {
+        for (line, expected) in [
+            (
+                "printf SECRET_MARKER; printf locked >&2; exit 7",
+                "Secret command error: locked",
+            ),
+            (
+                "printf SECRET_MARKER; exit 7",
+                "Secret command error: /bin/sh failed with exit status: 7",
+            ),
+        ] {
+            let err = shell(line).get().unwrap_err();
+            assert_eq!(err.to_string(), expected);
+            assert!(!format!("{err:?}").contains("SECRET_MARKER"));
+        }
+    }
+
+    #[test]
+    fn a_successful_helper_still_returns_the_first_line() {
+        let secret = shell("printf 'dummy-password\\nsecond-line\\n'")
+            .get()
+            .unwrap();
+        assert_eq!(secret.expose_secret(), "dummy-password");
+    }
+
+    #[test]
     fn a_command_backed_secret_is_spawned_once_per_resolver() {
         let path = temp_path("resolve-once");
         let _ = fs::remove_file(&path);
@@ -242,7 +267,7 @@ mod tests {
 
         assert!(
             err.to_string()
-                .starts_with("Secret command error: false printed nothing, ")
+                .starts_with("Secret command error: false failed with ")
         );
     }
 
