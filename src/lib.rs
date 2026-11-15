@@ -26,7 +26,8 @@
 //! and [`shell_expanded_path`] deserializers expanding environment
 //! variables in string and path config fields, and [`Removed`], the one
 //! sentence refusing a key a release removed, which [`removed_key!`]
-//! turns into a type a field holds. [`duration`] (same feature) is the
+//! turns into a type a field holds; the loader's unknown-key error lists
+//! no such key. [`duration`] (same feature) is the
 //! serde adapter for a [`std::time::Duration`] written as an integer of
 //! seconds or as a number and its unit (`"90d"`).
 //!

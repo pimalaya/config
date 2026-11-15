@@ -10,10 +10,12 @@
 //! [`shell_expanded_path`] and [`opt_shell_expanded_path`] deserializers
 //! expand environment variables in string and path config fields.
 //! [`Removed`] is the sentence refusing a key a release removed, and
-//! [`removed_key!`](crate::removed_key) declares a type refusing one.
+//! [`removed_key!`](crate::removed_key) declares a type refusing one. The
+//! loader leaves such keys out of the keys an unknown one is told to pick
+//! from.
 
 use std::{
-    env, fmt, fs, io,
+    env, error, fmt, fs, io,
     path::{Path, PathBuf},
 };
 
@@ -25,7 +27,7 @@ use serde::{
     de::{self, Visitor},
 };
 use thiserror::Error;
-use toml::Value;
+use toml::{Table, Value, de::Error as TomlError};
 
 /// A deserializable TOML configuration exposing named accounts.
 ///
@@ -107,7 +109,8 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
     /// deep-merged on top of the ones before
     ///
     /// Returns an error if a configuration file cannot be read or if
-    /// a content cannot be parsed.
+    /// a content cannot be parsed. An unknown key lists no key its table
+    /// refuses as removed.
     fn from_paths(paths: &[PathBuf]) -> Result<Self> {
         match paths.len() {
             0 => {
@@ -116,8 +119,9 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
             1 => {
                 let path = &paths[0];
                 let content = read_config(path)?;
-                toml::from_str(&content)
-                    .with_context(|| format!("Parse TOML config `{}` error", path.display()))
+                let config = unlisted(toml::from_str(&content), || toml::from_str(&content).ok());
+
+                config.with_context(|| format!("Parse TOML config `{}` error", path.display()))
             }
             _ => {
                 let base = read_config(&paths[0])?;
@@ -138,7 +142,9 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
                     merged_content = merge_toml(merged_content, content, "$")?;
                 }
 
-                merged_content.try_into().context("Parse TOML config error")
+                let config = Self::deserialize(merged_content.clone());
+
+                unlisted(config, || Some(merged_content)).context("Parse TOML config error")
             }
         }
     }
@@ -382,6 +388,113 @@ macro_rules! removed_key {
     )*};
 }
 
+/// serde's error for a key no field of a table takes, read back from its
+/// message.
+struct UnknownKey<'a> {
+    /// The key as written.
+    key: &'a str,
+    /// The keys the table takes, in the order serde lists them.
+    expected: Vec<&'a str>,
+}
+
+impl<'a> UnknownKey<'a> {
+    /// Reads serde's message, `None` for any other.
+    fn parse(message: &'a str) -> Option<Self> {
+        let rest = message.strip_prefix("unknown field `")?;
+        let (key, expected) = rest.rsplit_once("`, expected ")?;
+        let expected = expected.split('`').skip(1).step_by(2).collect();
+        let unknown = Self { key, expected };
+
+        (unknown.to_string() == message).then_some(unknown)
+    }
+
+    /// The message without the keys `T` refuses as removed at every table of
+    /// `doc` failing as this one, `None` when it lists none.
+    fn without_removed<T: for<'de> Deserialize<'de>>(&self, doc: &Value) -> Option<String> {
+        let message = self.to_string();
+        let mut tables = Vec::new();
+
+        tables_holding(doc, self.key, &mut Vec::new(), &mut tables);
+        tables.retain(|path| failure::<T>(path, self.key).as_ref() == Some(&message));
+
+        if tables.is_empty() {
+            return None;
+        }
+
+        let removed = |name: &str| {
+            let mut failures = tables.iter().map(|path| failure::<T>(path, name));
+            failures.all(|failure| failure.as_deref().is_some_and(is_removed))
+        };
+
+        let expected = self.expected.iter().copied();
+        let expected: Vec<&str> = expected.filter(|name| !removed(name)).collect();
+
+        if expected.len() == self.expected.len() {
+            return None;
+        }
+
+        let key = self.key;
+        Some(UnknownKey { key, expected }.to_string())
+    }
+}
+
+impl fmt::Display for UnknownKey<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown field `{}`, ", self.key)?;
+
+        match self.expected.as_slice() {
+            [] => f.write_str("there are no fields"),
+            [name] => write!(f, "expected `{name}`"),
+            [a, b] => write!(f, "expected `{a}` or `{b}`"),
+            names => {
+                f.write_str("expected one of ")?;
+
+                for (i, name) in names.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+
+                    write!(f, "`{name}`")?;
+                }
+
+                Ok(())
+            }
+        }
+    }
+}
+
+/// A TOML error whose message lists no removed key, shown where the TOML
+/// error showed it.
+#[derive(Debug)]
+struct Unlisted {
+    err: TomlError,
+    message: String,
+}
+
+impl fmt::Display for Unlisted {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let shown = self.err.to_string();
+        let old = self.err.message();
+
+        match shown.rfind(old) {
+            Some(at) => {
+                let (before, after) = (&shown[..at], &shown[at + old.len()..]);
+                write!(f, "{before}{}{after}", self.message)
+            }
+            None => f.write_str(&self.message),
+        }
+    }
+}
+
+impl error::Error for Unlisted {}
+
+/// One step down a document, to a table's key or to an array's item.
+#[derive(Clone, Copy)]
+enum Step<'a> {
+    Key(&'a str),
+    Item,
+}
+
 /// Deep-merges the `other` TOML value into `base`, at the given dotted
 /// `path` for error reporting.
 ///
@@ -493,6 +606,85 @@ fn sorted<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
     names
 }
 
+/// Answers `result`, an unknown-key error listing no key its table refuses
+/// as removed, the tables found in `doc`.
+fn unlisted<T: for<'de> Deserialize<'de>>(
+    result: Result<T, TomlError>,
+    doc: impl FnOnce() -> Option<Value>,
+) -> Result<T> {
+    let err = match result {
+        Ok(config) => return Ok(config),
+        Err(err) => err,
+    };
+
+    let message = UnknownKey::parse(err.message()).and_then(|unknown| {
+        let doc = doc()?;
+        unknown.without_removed::<T>(&doc)
+    });
+
+    match message {
+        Some(message) => Err(Unlisted { err, message }.into()),
+        None => Err(err.into()),
+    }
+}
+
+/// Collects the path to every table of `value` holding `key`.
+fn tables_holding<'a>(
+    value: &'a Value,
+    key: &str,
+    path: &mut Vec<Step<'a>>,
+    found: &mut Vec<Vec<Step<'a>>>,
+) {
+    match value {
+        Value::Table(table) => {
+            if table.contains_key(key) {
+                found.push(path.clone());
+            }
+
+            for (name, value) in table {
+                path.push(Step::Key(name));
+                tables_holding(value, key, path, found);
+                path.pop();
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                path.push(Step::Item);
+                tables_holding(item, key, path, found);
+                path.pop();
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The message `T` fails with on a document holding only `key`, an empty
+/// table, at `path`.
+fn failure<T: for<'de> Deserialize<'de>>(path: &[Step], key: &str) -> Option<String> {
+    let leaf = Table::from_iter([(key.to_owned(), Value::Table(Table::new()))]);
+    let doc = path
+        .iter()
+        .rev()
+        .fold(Value::Table(leaf), |value, step| match step {
+            Step::Key(key) => Value::Table(Table::from_iter([((*key).to_owned(), value)])),
+            Step::Item => Value::Array(vec![value]),
+        });
+
+    T::deserialize(doc)
+        .err()
+        .map(|err| err.message().to_owned())
+}
+
+/// Whether `message` is the sentence of a [`Removed`].
+fn is_removed(message: &str) -> bool {
+    let Some(rest) = message.strip_prefix("The `") else {
+        return false;
+    };
+
+    let kind = rest.contains("` key is removed, ") || rest.contains("` table is removed, ");
+    kind && rest.ends_with(", see MIGRATION.md")
+}
+
 struct ShellExpandedStringVisitor;
 
 impl<'de> Visitor<'de> for ShellExpandedStringVisitor {
@@ -559,7 +751,9 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use toml::Value;
 
-    use crate::toml::{AccountError, ConfigMissingError, TomlConfig, existing_once, merge_toml};
+    use crate::toml::{
+        AccountError, ConfigMissingError, TomlConfig, existing_once, merge_toml, unlisted,
+    };
 
     fn doc(s: &str) -> Value {
         toml::from_str(s).unwrap()
@@ -1048,6 +1242,184 @@ mod tests {
             err.message(),
             "The `card.list.table` table is removed, the output being plain \
              text: delete it, see MIGRATION.md"
+        );
+    }
+
+    crate::removed_key! {
+        MailboxRemoved: Key {
+            name: "mailbox",
+            why: "the collection being named under its backend",
+            instead: "write `imap.mailbox` instead",
+        }
+
+        WatchRemoved: Table {
+            name: "watch",
+            why: "the watch method being its backend's",
+            instead: "write `imap.watch` instead",
+        }
+
+        HookRemoved: Table {
+            name: "hook",
+            why: "the hooks taking Comodoro's shape",
+            instead: "write `hooks` instead",
+        }
+    }
+
+    /// An account refusing keys its backend still reads, as carillon's does.
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Family {
+        accounts: HashMap<String, FamilyAccount>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct FamilyAccount {
+        #[serde(default)]
+        default: bool,
+        imap: Option<FamilyImap>,
+        mailbox: Option<MailboxRemoved>,
+        watch: Option<WatchRemoved>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct FamilyImap {
+        host: Option<String>,
+        mailbox: Option<String>,
+        hook: Option<HookRemoved>,
+    }
+
+    impl TomlConfig for Family {
+        type Account = FamilyAccount;
+
+        fn project_name() -> &'static str {
+            "test"
+        }
+
+        fn sample_url() -> &'static str {
+            SAMPLE_URL
+        }
+
+        fn accounts(&self) -> impl Iterator<Item = (&str, bool)> {
+            let accounts = self.accounts.iter();
+            accounts.map(|(name, account)| (name.as_str(), account.default))
+        }
+
+        fn take_named_account(&mut self, name: &str) -> Option<(String, Self::Account)> {
+            self.accounts.remove_entry(name)
+        }
+    }
+
+    /// The TOML error loading `layers` as [`Family`] fails with.
+    fn family_error(name: &str, layers: &[&str]) -> String {
+        let dir = scratch_dir(name);
+        let mut paths = Vec::new();
+
+        for (i, layer) in layers.iter().enumerate() {
+            let path = dir.join(format!("{i}.toml"));
+            fs::write(&path, layer).unwrap();
+            paths.push(path);
+        }
+
+        let err = Family::from_paths(&paths).expect_err("refuse the unknown key");
+        fs::remove_dir_all(dir).unwrap();
+        err.root_cause().to_string()
+    }
+
+    /// The account refuses `mailbox` and `watch`, its `imap` table reads a
+    /// `host` of its own.
+    #[test]
+    fn an_unknown_key_lists_no_removed_one() {
+        let toml = "[accounts.a]\nhost = \"x\"\n[accounts.a.imap]\nhost = \"y\"\n";
+
+        assert_eq!(
+            family_error("unlisted", &[toml]),
+            "TOML parse error at line 2, column 1\n  \
+             |\n\
+             2 | host = \"x\"\n  \
+             | ^^^^\n\
+             unknown field `host`, expected `default` or `imap`\n",
+        );
+    }
+
+    /// `mailbox`, refused under the account, is read under `imap`.
+    #[test]
+    fn a_key_removed_elsewhere_stays_listed() {
+        let toml = "[accounts.a.imap]\nport = 1\n";
+        let err = family_error("elsewhere", &[toml]);
+
+        assert!(
+            err.ends_with("\nunknown field `port`, expected `host` or `mailbox`\n"),
+            "{err}",
+        );
+    }
+
+    /// Several layers are merged before they are read, which loses the
+    /// location.
+    #[test]
+    fn an_unknown_key_in_a_layer_lists_no_removed_one() {
+        let base = "[accounts.a]\ndefault = true\n";
+        let layer = "[accounts.a]\nhost = \"x\"\n";
+        let err = family_error("unlisted-layers", &[base, layer]);
+
+        assert!(
+            err.starts_with("unknown field `host`, expected `default` or `imap`\n"),
+            "{err}",
+        );
+    }
+
+    #[allow(dead_code)]
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Lone {
+        kept: Option<u8>,
+        mailbox: Option<MailboxRemoved>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Several {
+        a: Option<u8>,
+        mailbox: Option<MailboxRemoved>,
+        b: Option<u8>,
+        c: Option<u8>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Bare {
+        mailbox: Option<MailboxRemoved>,
+        watch: Option<WatchRemoved>,
+    }
+
+    fn unlisted_message<T: for<'de> Deserialize<'de>>(toml: &str) -> String {
+        let doc = toml::from_str(toml).ok();
+        let config = unlisted::<T>(toml::from_str(toml), || doc);
+
+        config.err().expect("refuse the unknown key").to_string()
+    }
+
+    #[test]
+    fn the_keys_left_are_listed_as_serde_lists_them() {
+        let one = unlisted_message::<Lone>("x = 1\n");
+        assert!(
+            one.ends_with("\nunknown field `x`, expected `kept`\n"),
+            "{one}"
+        );
+
+        let several = unlisted_message::<Several>("x = 1\n");
+        let listed = "\nunknown field `x`, expected one of `a`, `b`, `c`\n";
+        assert!(several.ends_with(listed), "{several}");
+
+        let none = unlisted_message::<Bare>("x = 1\n");
+        assert!(
+            none.ends_with("\nunknown field `x`, there are no fields\n"),
+            "{none}"
         );
     }
 }

@@ -6,7 +6,7 @@ status: current
 
 # TOML
 
-The `toml` feature reads a product's TOML configuration: its default paths, the layering of several files, a missing configuration, the account a command runs against, the deserializers expanding the shell syntax in a string or a path, and the sentence refusing a key a release removed.
+The `toml` feature reads a product's TOML configuration: its default paths, the layering of several files, a missing configuration, the account a command runs against, the deserializers expanding the shell syntax in a string or a path, and the sentence refusing a key a release removed, which an unknown key's error leaves out of the keys it lists.
 
 ### Requirement: Shell-expanded strings
 `shell_expanded_string`, `shell_expanded_path` and `opt_shell_expanded_path` SHALL expand environment variables (`$name`, `${name}`) and a leading tilde, the tilde to the home directory dirs reports. A home directory that is not valid Unicode SHALL leave the tilde as written, and an undefined variable SHALL leave the whole value as written rather than fail.
@@ -67,3 +67,16 @@ shellexpand SHALL be built without its `tilde` feature, the home directory comin
 - **GIVEN** the same field
 - **WHEN** a configuration without `table` is read and written back
 - **THEN** the field reads `None` and nothing is written for it
+
+### Requirement: An unknown key lists no removed one
+When loading through `TomlConfig` fails on a key no field of a table takes, the error SHALL read as serde's "unknown field `{key}`, expected ..." without the keys that table refuses as removed: a listed key SHALL leave the list when the configuration type, given a document holding only that key at that table, fails with the sentence of `toml::Removed`. The list SHALL be written as serde writes it, "expected `{a}`", "expected `{a}` or `{b}`", "expected one of `{a}`, `{b}`, ...", or "there are no fields" when every key is removed. A key the same type reads elsewhere SHALL stay listed there. The error SHALL keep the location the TOML error shows. When the table cannot be told, the error SHALL stay as serde wrote it.
+
+#### Scenario: A key next to a removed one
+- **GIVEN** an account table reading `default` and `imap`, and refusing `mailbox` and `watch` as removed
+- **WHEN** a configuration holding `host` under the account is loaded
+- **THEN** loading fails with "unknown field `host`, expected `default` or `imap`", at the line of `host`
+
+#### Scenario: A key the account refuses, read under a backend
+- **GIVEN** the same account, its `imap` table reading `host` and `mailbox`, and refusing `hook` as removed
+- **WHEN** a configuration holding `port` under `imap` is loaded
+- **THEN** loading fails with "unknown field `port`, expected `host` or `mailbox`"

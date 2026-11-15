@@ -19,7 +19,7 @@ Config utils for Pimalaya
 
 - **TOML loader**: reads a project's TOML configuration from explicit paths or the default locations, deep-merging several files into one (the default ones as layers, `~/.<project>rc` on top) and telling a missing file, reported with the path looked for and the sample configuration to start from, apart from an unreadable one (requires `toml` feature).
 - **Account resolution**: takes the named or default account, an unknown name listing the accounts the configuration holds and a missing or ambiguous default saying how to pick one (requires `toml` feature).
-- **Removed keys**: one sentence refusing by name a key or table a release removed, pointing at MIGRATION.md, and a macro declaring the type of a field refusing one (requires `toml` feature).
+- **Removed keys**: one sentence refusing by name a key or table a release removed, pointing at MIGRATION.md, and a macro declaring the type of a field refusing one; an unknown key's error lists no removed one (requires `toml` feature).
 - **Duration deserialization**: a serde adapter reading a duration as an integer of seconds or a number and its unit (`"90d"`), for a `Duration` or an `Option<Duration>` field (requires `toml` feature).
 - **Secret resolution**: resolves a secret from a literal value or a shell command's standard output, evaluated lazily at the moment it is needed rather than cached (requires `secret` feature).
 - **Shell command deserialization**: a serde adapter reading a command as a shell line string or a program-plus-arguments list, writing either shape back unchanged, under the key `command` or its alias `cmd` (requires `secret` feature).

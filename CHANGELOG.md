@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed an unknown key's error listing the removed keys among the ones to pick from: `toml::TomlConfig` loading leaves out of serde's "expected one of ..." every key the table refuses as removed, and keeps listing a key the same type reads in another table.
+
 ## [0.5.1] - 2026-11-15
 
 ### Added
