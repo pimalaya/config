@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-15
+
 ### Changed
 
 - Changed `TomlConfig::take_account` to read `default` as a name like any other: an absent or empty name takes the account marked default, and `-a default` now takes the account named `default`, failing with a hint to omit `-a` when there is none. **Breaking.**
@@ -182,7 +184,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Added the `command` serde adapter, reading a `std::process::Command` from a shell line or a program and its arguments.
 - Added `toml::shell_expanded_string` and `toml::shell_expanded_path`, expanding environment variables in config fields.
 
-[unreleased]: https://github.com/pimalaya/config/compare/v0.4.1..HEAD
+[unreleased]: https://github.com/pimalaya/config/compare/v0.5.0..HEAD
+[0.5.0]: https://github.com/pimalaya/config/compare/v0.4.1..v0.5.0
 [0.4.1]: https://github.com/pimalaya/config/compare/v0.4.0..v0.4.1
 [0.4.0]: https://github.com/pimalaya/config/compare/v0.3.1..v0.4.0
 [0.3.1]: https://github.com/pimalaya/config/compare/v0.3.0..v0.3.1
