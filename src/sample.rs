@@ -128,10 +128,12 @@ fn code(line: &str) -> Option<&str> {
     (field || line.starts_with('"')).then_some(line)
 }
 
-/// The field a line sets, a secret's `raw` and `command` being one.
+/// The field a line sets, a secret's `raw`, `command` and `cmd` being one.
 fn key(line: &str) -> Option<&str> {
     let key = line.trim_start().split_once(" = ")?.0;
-    let secret = key.strip_suffix(".raw").or(key.strip_suffix(".command"));
+    let secret = [".raw", ".command", ".cmd"]
+        .into_iter()
+        .find_map(|variant| key.strip_suffix(variant));
     Some(secret.unwrap_or(key))
 }
 
@@ -317,6 +319,23 @@ scopes = [
             .collect();
 
         assert_eq!(variants, expected);
+    }
+
+    #[test]
+    fn a_secret_raw_command_and_cmd_are_one_field() {
+        let sample = "a.raw = \"x\"\n#a.command = \"y\"\n#a.cmd = \"z\"\n";
+        let texts: Vec<_> = variants(sample, &[])
+            .into_iter()
+            .map(|variant| variant.text)
+            .collect();
+
+        let expected = [
+            "a.raw = \"x\"\n#a.command = \"y\"\n#a.cmd = \"z\"",
+            "#a.raw = \"x\"\na.command = \"y\"\n#a.cmd = \"z\"",
+            "#a.raw = \"x\"\n#a.command = \"y\"\na.cmd = \"z\"",
+        ];
+
+        assert_eq!(texts, expected);
     }
 
     #[test]

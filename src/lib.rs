@@ -24,7 +24,11 @@
 //! takes the named or default account, an [`AccountError`] saying how
 //! to pick one. The module also carries the [`shell_expanded_string`]
 //! and [`shell_expanded_path`] deserializers expanding environment
-//! variables in string and path config fields.
+//! variables in string and path config fields, and [`Removed`], the one
+//! sentence refusing a key a release removed, which [`removed_key!`]
+//! turns into a type a field holds. [`duration`] (same feature) is the
+//! serde adapter for a [`std::time::Duration`] written as an integer of
+//! seconds or as a number and its unit (`"90d"`).
 //!
 //! [`sample`] (`sample` feature, for dev-dependencies) builds the
 //! variants of a documented sample configuration a user may write, each
@@ -40,7 +44,8 @@
 //! string or a program-plus-arguments list and written back as the
 //! shape it came from, which becomes a [`std::process::Command`] only
 //! when something runs it. The module doubles as the serde adapter for
-//! a field holding that runnable form directly.
+//! a field holding that runnable form directly. A command sits under the
+//! key `command`, `cmd` being its alias wherever one is read.
 //!
 //! [`notify`] is its counterpart for desktop notifications, reading a
 //! [`Notification`] from a summary and a body, and a
@@ -68,6 +73,7 @@
 //! [`AccountError`]: toml::AccountError
 //! [`shell_expanded_string`]: toml::shell_expanded_string
 //! [`shell_expanded_path`]: toml::shell_expanded_path
+//! [`Removed`]: toml::Removed
 //! [`CommandConfig`]: command::CommandConfig
 //! [`Secret`]: secret::Secret
 //! [`SecretResolver`]: secret::SecretResolver
@@ -76,6 +82,8 @@
 
 #[cfg(feature = "secret")]
 pub mod command;
+#[cfg(feature = "toml")]
+pub mod duration;
 pub mod notify;
 #[cfg(feature = "sample")]
 pub mod sample;

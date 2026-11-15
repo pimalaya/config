@@ -13,14 +13,18 @@
 //!
 //! Two TOML shapes are accepted:
 //!
-//! - **String**: `cmd = "pass show foo"`. The whole string is
+//! - **String**: `command = "pass show foo"`. The whole string is
 //!   handed to the platform shell: `/bin/sh -c "<string>"` on Unix,
 //!   `cmd /C "<string>"` on Windows. Use this when you want pipes,
 //!   glob expansion, env substitution, etc.
-//! - **Sequence of strings**: `cmd = ["pass", "show", "foo"]`.
+//! - **Sequence of strings**: `command = ["pass", "show", "foo"]`.
 //!   First element is the program, the rest are its arguments. No
 //!   shell is involved, so quoting/whitespace rules are the kernel
 //!   exec rules.
+//!
+//! The key holding a command is `command`, and `cmd` is its alias: a
+//! field of this crate reading one accepts both, and so should a
+//! consumer's, through `#[serde(alias = "cmd")]`.
 //!
 //! Empty inputs (empty string, blank string, empty array) are
 //! deserialization errors.
@@ -41,6 +45,8 @@ use serde::{
 
 /// A command as a configuration writes it: a shell line, or a program
 /// and its arguments.
+///
+/// A field holding one is keyed `command`, `cmd` its alias.
 ///
 /// The two are distinct values, and comparing them never crosses the
 /// variants: a `Shell` line and the `Argv` spelling that runs it through

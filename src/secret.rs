@@ -180,6 +180,7 @@ mod tests {
     use std::{env::temp_dir, fs, path::PathBuf, process};
 
     use secrecy::ExposeSecret;
+    use serde::{Deserialize, Serialize};
 
     use super::{Secret, SecretResolver};
     use crate::command::CommandConfig;
@@ -300,5 +301,27 @@ mod tests {
         assert_eq!(resolver.resolve(argv).unwrap().expose_secret(), "2");
 
         fs::remove_file(&path).unwrap();
+    }
+
+    #[derive(Deserialize, Serialize)]
+    struct Account {
+        password: Secret,
+    }
+
+    /// Either key reads the command, which is written back as `command`.
+    #[test]
+    fn cmd_is_the_alias_of_command() {
+        for key in ["cmd", "command"] {
+            let written = format!("password.{key} = \"pass show mail\"");
+            let account: Account = toml::from_str(&written).unwrap();
+
+            let Secret::Command(CommandConfig::Shell(line)) = &account.password else {
+                panic!("`{key}` read no shell command");
+            };
+            assert_eq!(line, "pass show mail");
+
+            let rewritten = toml::to_string(&account).unwrap();
+            assert_eq!(rewritten.trim(), "[password]\ncommand = \"pass show mail\"");
+        }
     }
 }

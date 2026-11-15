@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Added `toml::Removed`, the one sentence refusing a removed configuration key or table by name.
+
+  It reads "The `<name>` key is removed, <why>: <instead>, see MIGRATION.md", `table` for a table; `error` answers it as a serde error.
+
+- Added the `removed_key!` macro, declaring the type of a field that refuses a removed key with that sentence.
+- Added the `duration` serde adapter for a `std::time::Duration` written as an integer of seconds or as a number and its unit (`"90d"`), and `duration::option` for an `Option<Duration>`.
+
+### Fixed
+
+- Fixed `sample::variants` taking a secret's `cmd`, the alias of `command`, apart from its `raw`, which left both active in a variant.
+
 ## [0.5.0] - 2026-11-15
 
 ### Changed

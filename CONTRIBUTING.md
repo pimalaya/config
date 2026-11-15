@@ -17,7 +17,7 @@ pimalaya-config loads files, spawns commands and expands environment variables, 
 
 ```sh
 cargo build --no-default-features                          # the notify types alone, failing when used
-cargo build --no-default-features --features toml          # TOML loader, account resolution, shell expansion
+cargo build --no-default-features --features toml          # TOML loader, account resolution, shell expansion, removed keys, durations
 cargo build --no-default-features --features secret        # secret resolution + command adapter
 cargo build --no-default-features --features notify        # desktop notifications
 cargo build --no-default-features --features sample        # sample configuration variants, for tests

@@ -9,6 +9,8 @@
 //! that says how to pick one. The [`shell_expanded_string`],
 //! [`shell_expanded_path`] and [`opt_shell_expanded_path`] deserializers
 //! expand environment variables in string and path config fields.
+//! [`Removed`] is the sentence refusing a key a release removed, and
+//! [`removed_key!`](crate::removed_key) declares a type refusing one.
 
 use std::{
     env, fmt, fs, io,
@@ -18,7 +20,10 @@ use std::{
 use anyhow::{Context, Result, bail};
 use dirs::{config_dir, home_dir};
 use log::debug;
-use serde::{Deserialize, Deserializer, de::Visitor};
+use serde::{
+    Deserialize, Deserializer,
+    de::{self, Visitor},
+};
 use thiserror::Error;
 use toml::Value;
 
@@ -270,6 +275,113 @@ pub enum AccountError {
     SeveralDefaults(Vec<String>),
 }
 
+/// A configuration key or table a release removed, refused by name.
+///
+/// It reads "The `{name}` key is removed, {why}: {instead}, see
+/// MIGRATION.md", `table` in place of `key` for a table.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Removed<'a> {
+    /// A key holding a value.
+    Key {
+        /// The key as written, dotted from where it sits (`carddav.discover`).
+        name: &'a str,
+        /// Why it went, read after "is removed, ".
+        why: &'a str,
+        /// What to write instead, `delete it` when nothing replaces it.
+        instead: &'a str,
+    },
+    /// A table holding keys.
+    Table {
+        /// The table as written, dotted from where it sits (`card.list.table`).
+        name: &'a str,
+        /// Why it went, read after "is removed, ".
+        why: &'a str,
+        /// What to write instead, `delete it` when nothing replaces it.
+        instead: &'a str,
+    },
+}
+
+impl Removed<'_> {
+    /// The deserialization error refusing it.
+    pub fn error<E: de::Error>(&self) -> E {
+        E::custom(self)
+    }
+}
+
+impl fmt::Display for Removed<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (kind, name, why, instead) = match self {
+            Self::Key { name, why, instead } => ("key", name, why, instead),
+            Self::Table { name, why, instead } => ("table", name, why, instead),
+        };
+
+        write!(
+            f,
+            "The `{name}` {kind} is removed, {why}: {instead}, see MIGRATION.md"
+        )
+    }
+}
+
+/// Declares a type refusing a removed key or table by name, with the
+/// sentence of [`toml::Removed`](crate::toml::Removed).
+///
+/// The type is an empty enum: a field `Option<T>` of it reads `None` when
+/// the key is absent and fails the load naming it when present. The
+/// calling crate depends on serde.
+///
+/// ```
+/// use serde::Deserialize;
+///
+/// pimalaya_config::removed_key! {
+///     /// The `table` table, refused by name.
+///     pub TableRemoved: Table {
+///         name: "table",
+///         why: "the output being plain text",
+///         instead: "delete it",
+///     }
+/// }
+///
+/// #[derive(Deserialize)]
+/// struct Config {
+///     table: Option<TableRemoved>,
+/// }
+///
+/// let err = toml::from_str::<Config>("table.preset = \"x\"").err().unwrap();
+/// let sentence = "The `table` table is removed, the output being plain \
+///                 text: delete it, see MIGRATION.md";
+///
+/// assert_eq!(err.message(), sentence);
+/// ```
+#[macro_export]
+macro_rules! removed_key {
+    ($(
+        $(#[$meta:meta])*
+        $vis:vis $ty:ident: $kind:ident { $($field:ident: $value:expr),+ $(,)? }
+    )*) => {$(
+        $(#[$meta])*
+        #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+        $vis enum $ty {}
+
+        impl<'de> ::serde::Deserialize<'de> for $ty {
+            fn deserialize<D: ::serde::Deserializer<'de>>(
+                _: D,
+            ) -> ::core::result::Result<Self, D::Error> {
+                let removed = $crate::toml::Removed::$kind { $($field: $value),+ };
+                ::core::result::Result::Err(removed.error())
+            }
+        }
+
+        impl ::serde::Serialize for $ty {
+            fn serialize<S: ::serde::Serializer>(
+                &self,
+                _: S,
+            ) -> ::core::result::Result<S::Ok, S::Error> {
+                match *self {}
+            }
+        }
+    )*};
+}
+
 /// Deep-merges the `other` TOML value into `base`, at the given dotted
 /// `path` for error reporting.
 ///
@@ -444,7 +556,7 @@ mod tests {
     };
 
     use anyhow::Result;
-    use serde::Deserialize;
+    use serde::{Deserialize, Serialize};
     use toml::Value;
 
     use crate::toml::{AccountError, ConfigMissingError, TomlConfig, existing_once, merge_toml};
@@ -895,5 +1007,47 @@ mod tests {
 
         let raw = "$PIMALAYA_CONFIG_UNDEFINED_VARIABLE/x";
         assert_eq!(expand(raw), raw);
+    }
+
+    crate::removed_key! {
+        DiscoverRemoved: Key {
+            name: "carddav.discover",
+            why: "the server being named",
+            instead: "write `carddav.server` instead",
+        }
+
+        TableRemoved: Table {
+            name: "card.list.table",
+            why: "the output being plain text",
+            instead: "delete it",
+        }
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    struct Refusing {
+        discover: Option<DiscoverRemoved>,
+        table: Option<TableRemoved>,
+        kept: Option<u8>,
+    }
+
+    #[test]
+    fn a_removed_key_is_refused_by_name_and_an_absent_one_reads_none() {
+        let config: Refusing = toml::from_str("kept = 1\n").unwrap();
+        assert!(config.discover.is_none() && config.table.is_none());
+        assert_eq!(toml::to_string(&config).unwrap(), "kept = 1\n");
+
+        let err = toml::from_str::<Refusing>("discover = true\n").unwrap_err();
+        assert_eq!(
+            err.message(),
+            "The `carddav.discover` key is removed, the server being named: \
+             write `carddav.server` instead, see MIGRATION.md"
+        );
+
+        let err = toml::from_str::<Refusing>("[table]\npreset = \"x\"\n").unwrap_err();
+        assert_eq!(
+            err.message(),
+            "The `card.list.table` table is removed, the output being plain \
+             text: delete it, see MIGRATION.md"
+        );
     }
 }
