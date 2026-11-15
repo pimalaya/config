@@ -47,7 +47,7 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
     fn take_named_account(&mut self, name: &str) -> Option<(String, Self::Account)>;
 
     /// Takes the account named `name`, or the one marked default when
-    /// `name` is absent, empty or `"default"`.
+    /// `name` is absent or empty. `default` is a name like any other.
     ///
     /// Fails when no account has that name, listing the ones the
     /// configuration holds, and when no account or several are marked
@@ -56,7 +56,7 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
         &mut self,
         name: Option<&str>,
     ) -> Result<(String, Self::Account), AccountError> {
-        let name = match name.filter(|name| !name.is_empty() && *name != "default") {
+        let name = match name.filter(|name| !name.is_empty()) {
             Some(name) => name.to_owned(),
             None => {
                 let defaults = self.accounts().filter(|(_, default)| *default);
@@ -246,7 +246,11 @@ pub struct ConfigMissingError {
 #[derive(Debug, Error)]
 pub enum AccountError {
     /// No account has the requested name.
-    #[error("Account `{name}` not found, the configuration holds{}", held(names))]
+    #[error(
+        "Account `{name}` not found, the configuration holds{}{}",
+        held(names),
+        omitted(name)
+    )]
     Missing {
         /// The requested name.
         name: String,
@@ -357,6 +361,15 @@ fn held(names: &[String]) -> String {
     match names {
         [] => String::from(" no account"),
         names => format!(": {}", names.join(", ")),
+    }
+}
+
+/// The hint for a name of `default`, which takes no account marked default:
+/// a missing `-a` does.
+fn omitted(name: &str) -> &'static str {
+    match name {
+        "default" => ", omit `-a` to take the account marked default",
+        _ => "",
     }
 }
 
@@ -741,13 +754,33 @@ mod tests {
     }
 
     #[test]
-    fn no_name_an_empty_one_and_default_take_the_default_account() {
+    fn no_name_and_an_empty_one_take_the_default_account() {
         let toml = "[accounts.a]\n[accounts.b]\ndefault = true\n";
 
-        for name in [None, Some(""), Some("default")] {
+        for name in [None, Some("")] {
             let (taken, _) = accounts(toml).take_account(name).unwrap();
             assert_eq!(taken, "b", "{name:?}");
         }
+    }
+
+    /// `default` once meant the account marked default, which made an
+    /// account of that name unreachable whenever another one was marked.
+    #[test]
+    fn default_is_a_name_like_any_other() {
+        let toml = "[accounts.default]\n[accounts.b]\ndefault = true\n";
+        let (taken, _) = accounts(toml).take_account(Some("default")).unwrap();
+        assert_eq!(taken, "default");
+
+        let err = accounts("[accounts.b]\ndefault = true\n")
+            .take_account(Some("default"))
+            .unwrap_err();
+
+        assert!(matches!(&err, AccountError::Missing { name, .. } if name == "default"));
+        assert_eq!(
+            err.to_string(),
+            "Account `default` not found, the configuration holds: b, omit `-a` to take \
+             the account marked default",
+        );
     }
 
     #[test]

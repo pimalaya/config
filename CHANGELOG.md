@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Changed `TomlConfig::take_account` to read `default` as a name like any other: an absent or empty name takes the account marked default, and `-a default` now takes the account named `default`, failing with a hint to omit `-a` when there is none. **Breaking.**
+
 ### Fixed
 
 - Fixed a failing secret command exposing its standard output, where the secret comes out, through `SecretError`: the error now carries its standard error, or its program and exit status when it wrote none ([pimalaya/config#1](https://github.com/pimalaya/config/pull/1)).
