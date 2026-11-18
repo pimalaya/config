@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Added `secret::COMMAND_ENV`, the `PIMALAYA_SECRET_COMMAND=1` a secret command runs with.
+
+  It tells a program of the family that its standard output is the secret, so it writes its failure on standard error, where `SecretError` reports it.
+
 - Added `command::Timeout`, the optional `timeout` of a hook command.
 
   It reads as a duration (`"90s"`, `"5m"`, `90`), refuses zero, and has no default; its caller sends `SIGTERM` when it passes, then kills the command after `Timeout::GRACE`.

@@ -29,6 +29,12 @@ use thiserror::Error;
 
 use crate::command::CommandConfig;
 
+/// The variable set to `1` in a secret command's environment.
+///
+/// It tells a program that its standard output is read as a secret and
+/// never reported, so it writes its failure on standard error instead.
+pub const COMMAND_ENV: &str = "PIMALAYA_SECRET_COMMAND";
+
 /// The errors raised while resolving a command-backed [`Secret`].
 #[derive(Debug, Error)]
 pub enum SecretError {
@@ -71,6 +77,9 @@ impl Secret {
     /// Returns a [`SecretError`] when the command fails to spawn or
     /// exits with a non-zero status.
     ///
+    /// The command runs with [`COMMAND_ENV`] set, so a program of the
+    /// family reports its failure where the error can read it.
+    ///
     /// The command can take as long as the credential store behind it
     /// does, a locked `gpg-agent` being seconds rather than
     /// milliseconds, so the spawn is logged with the time it took. The
@@ -93,7 +102,11 @@ impl Secret {
                 };
 
                 let start = Instant::now();
-                let output = cmd.stdin(stdin).output().map_err(SecretError::Spawn)?;
+                let output = cmd
+                    .stdin(stdin)
+                    .env(COMMAND_ENV, "1")
+                    .output()
+                    .map_err(SecretError::Spawn)?;
 
                 if !output.status.success() {
                     // NOTE: a command failing after printing the secret
@@ -397,6 +410,21 @@ mod tests {
     fn a_failing_command_reports_its_stderr() {
         let err = shell("echo locked >&2; exit 1").get().unwrap_err();
         assert_eq!(err.to_string(), "Secret command error: locked");
+    }
+
+    /// A family helper, such as a token helper, reports its failure on
+    /// standard output unless told it runs as a secret command.
+    #[test]
+    fn a_family_helper_failing_is_reported_by_its_reason() {
+        let line = "if [ \"$PIMALAYA_SECRET_COMMAND\" = 1 ]; \
+                    then echo 'Error: No access token stored' >&2; \
+                    else echo 'Error: No access token stored'; fi; exit 1";
+
+        let err = shell(line).get().unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Secret command error: Error: No access token stored"
+        );
     }
 
     /// The two shapes are two commands, whatever they end up running:

@@ -36,3 +36,11 @@ A secret command exiting with a non-zero status SHALL fail with its trimmed stan
 - **GIVEN** `password = "hunter2"`
 - **WHEN** it is read as a `Secret`
 - **THEN** reading fails with "a secret is a table: `raw` for a literal value, `command` for a command printing it", which holds no part of `hunter2`
+
+### Requirement: A secret command is told it is one
+`Secret::get` SHALL run the command with `PIMALAYA_SECRET_COMMAND=1` (`secret::COMMAND_ENV`) in its environment, the rest inherited. It tells a program that its standard output is read as the secret and never reported, so a program of the family, whose failures go to standard output, writes its failure on standard error instead, where the error reports it. The variable SHALL change nothing else in how the command is run or read.
+
+#### Scenario: A token helper with no token stored
+- **GIVEN** the secret command `ortie token show`, no token stored, ortie writing its failure on standard error when `PIMALAYA_SECRET_COMMAND` is `1`
+- **WHEN** it is resolved
+- **THEN** the error reads "Secret command error: " followed by ortie's failure, "No access token stored" among it, where it read "/bin/sh failed with exit status: 1"
