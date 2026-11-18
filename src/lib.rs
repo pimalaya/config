@@ -27,7 +27,7 @@
 //! variables in string and path config fields, and [`Removed`], the one
 //! sentence refusing a key a release removed, which [`removed_key!`]
 //! turns into a type a field holds; the loader's unknown-key error lists
-//! no such key. [`duration`] (same feature) is the
+//! no such key. [`duration`] (same feature, and `secret`) is the
 //! serde adapter for a [`std::time::Duration`] written as an integer of
 //! seconds or as a number and its unit (`"90d"`).
 //!
@@ -46,7 +46,9 @@
 //! shape it came from, which becomes a [`std::process::Command`] only
 //! when something runs it. The module doubles as the serde adapter for
 //! a field holding that runnable form directly. A command sits under the
-//! key `command`, `cmd` being its alias wherever one is read.
+//! key `command`, `cmd` being its alias wherever one is read. A hook
+//! command may carry a [`Timeout`], read under `timeout` beside it, after
+//! which its caller stops it.
 //!
 //! [`notify`] is its counterpart for desktop notifications, reading a
 //! [`Notification`] from a summary and a body, and a
@@ -76,6 +78,7 @@
 //! [`shell_expanded_path`]: toml::shell_expanded_path
 //! [`Removed`]: toml::Removed
 //! [`CommandConfig`]: command::CommandConfig
+//! [`Timeout`]: command::Timeout
 //! [`Secret`]: secret::Secret
 //! [`SecretResolver`]: secret::SecretResolver
 //! [`Notification`]: notify::Notification
@@ -83,7 +86,7 @@
 
 #[cfg(feature = "secret")]
 pub mod command;
-#[cfg(feature = "toml")]
+#[cfg(any(feature = "toml", feature = "secret"))]
 pub mod duration;
 pub mod notify;
 #[cfg(feature = "sample")]

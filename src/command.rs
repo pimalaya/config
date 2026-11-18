@@ -29,19 +29,24 @@
 //! Empty inputs (empty string, blank string, empty array) are
 //! deserialization errors.
 //!
+//! A hook command may run under a [`Timeout`], a key of its own read
+//! beside `command`, which the caller enforces.
+//!
 //! Serialization mirrors the two shapes. A [`CommandConfig`] writes back
 //! the shape it was read as, having kept it. The [`std::process::Command`]
 //! adapter has no such memory and recovers it: a command built through
 //! [`shell`] is written as its bare command line, and any other as the
 //! program + args sequence.
 
-use std::{fmt, process::Command};
+use std::{fmt, process::Command, time::Duration};
 
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{Error, SeqAccess, Visitor},
     ser::SerializeSeq,
 };
+
+use crate::duration;
 
 /// A command as a configuration writes it: a shell line, or a program
 /// and its arguments.
@@ -106,6 +111,39 @@ impl Serialize for CommandConfig {
                 seq.end()
             }
         }
+    }
+}
+
+/// How long a hook command may run, read under `timeout` beside its
+/// `command` as [`crate::duration`] reads a duration (`"90s"`, `"5m"`, `90`).
+///
+/// No key means no timeout. When it passes, the caller sends the command
+/// `SIGTERM`, then kills it once [`Timeout::GRACE`] has passed too.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct Timeout(pub Duration);
+
+impl Timeout {
+    /// How long a command has to end after `SIGTERM` before it is killed.
+    pub const GRACE: Duration = Duration::from_secs(5);
+}
+
+impl<'de> Deserialize<'de> for Timeout {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let duration = duration::deserialize(deserializer)?;
+
+        if duration.is_zero() {
+            return Err(D::Error::custom(
+                "Invalid timeout of zero, omit `timeout` for a command running until it ends",
+            ));
+        }
+
+        Ok(Self(duration))
+    }
+}
+
+impl Serialize for Timeout {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        duration::serialize(&self.0, serializer)
     }
 }
 
@@ -214,11 +252,11 @@ impl<'de> Visitor<'de> for CommandVisitor {
 
 #[cfg(test)]
 mod tests {
-    use std::process::Command;
+    use std::{process::Command, time::Duration};
 
     use serde::de::value::{Error, SeqDeserializer, StringDeserializer};
 
-    use super::CommandConfig;
+    use crate::command::{CommandConfig, Timeout};
 
     fn de_str(s: &str) -> Result<Command, Error> {
         let d = StringDeserializer::<Error>::new(s.to_owned());
@@ -327,5 +365,45 @@ mod tests {
 
         assert_ne!(shell, argv);
         assert_eq!(parts(&shell.to_command()), parts(&argv.to_command()));
+    }
+
+    #[derive(Debug, serde::Deserialize, serde::Serialize)]
+    #[serde(deny_unknown_fields)]
+    struct Hook {
+        command: Option<CommandConfig>,
+        timeout: Option<Timeout>,
+    }
+
+    #[test]
+    fn a_timeout_reads_as_a_duration_and_is_optional() {
+        for (written, secs) in [("90", 90), ("\"90s\"", 90), ("\"5m\"", 300)] {
+            let hook: Hook = toml::from_str(&format!("timeout = {written}")).unwrap();
+            assert_eq!(hook.timeout, Some(Timeout(Duration::from_secs(secs))));
+        }
+
+        let hook: Hook = toml::from_str("command = \"true\"").unwrap();
+        assert_eq!(hook.timeout, None);
+
+        let hook: Hook = toml::from_str("timeout = 300").unwrap();
+        assert_eq!(toml::to_string(&hook).unwrap().trim(), "timeout = \"5m\"");
+    }
+
+    #[test]
+    fn a_timeout_of_zero_or_no_duration_is_refused() {
+        for written in ["0", "\"0\"", "\"0s\""] {
+            let err = toml::from_str::<Hook>(&format!("timeout = {written}")).unwrap_err();
+            assert_eq!(
+                err.message(),
+                "Invalid timeout of zero, omit `timeout` for a command running \
+                 until it ends",
+                "{written}"
+            );
+        }
+
+        let err = toml::from_str::<Hook>("timeout = \"6mo\"").unwrap_err();
+        assert!(
+            err.message().starts_with("Invalid duration \"6mo\""),
+            "{err}"
+        );
     }
 }
