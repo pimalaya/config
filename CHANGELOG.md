@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-18
+
 ### Added
 
 - Added `Display` for `command::CommandConfig`, the command as a user would type it.
@@ -235,7 +237,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Added the `command` serde adapter, reading a `std::process::Command` from a shell line or a program and its arguments.
 - Added `toml::shell_expanded_string` and `toml::shell_expanded_path`, expanding environment variables in config fields.
 
-[unreleased]: https://github.com/pimalaya/config/compare/v0.5.2..HEAD
+[unreleased]: https://github.com/pimalaya/config/compare/v0.6.0..HEAD
+[0.6.0]: https://github.com/pimalaya/config/compare/v0.5.2..v0.6.0
 [0.5.2]: https://github.com/pimalaya/config/compare/v0.5.1..v0.5.2
 [0.5.1]: https://github.com/pimalaya/config/compare/v0.5.0..v0.5.1
 [0.5.0]: https://github.com/pimalaya/config/compare/v0.4.1..v0.5.0
