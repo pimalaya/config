@@ -8,11 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Added `Display` for `command::CommandConfig`, the command as a user would type it.
+
 - Added `command::Timeout`, the optional `timeout` of a hook command.
 
   It reads as a duration (`"90s"`, `"5m"`, `90`), refuses zero, and has no default; its caller sends `SIGTERM` when it passes, then kills the command after `Timeout::GRACE`.
 
 ### Changed
+
+- **BREAKING**: Changed `secret::SecretError::Output` to a struct variant naming the `command` that failed beside its `reason`.
+
+  Its message ends with ", run `<command>` yourself to see why", the command as configured, never its output.
 
 - Changed the `duration` module to build with the `secret` feature as well as `toml`.
 

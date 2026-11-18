@@ -38,12 +38,16 @@ pub enum SecretError {
     /// Waiting for the secret command to exit failed.
     #[error("Wait secret command error")]
     Wait(#[source] io::Error),
-    /// The secret command exited with a non-zero status; the payload
-    /// carries its trimmed standard error, or its program and exit status
-    /// when it wrote none, never its standard output, which holds the
-    /// secret.
-    #[error("Secret command error: {0}")]
-    Output(String),
+    /// The secret command exited with a non-zero status, never reported by
+    /// its standard output, which holds the secret.
+    #[error("Secret command error: {reason}, run `{command}` yourself to see why")]
+    Output {
+        /// The command as configured, for the user to run.
+        command: CommandConfig,
+        /// Its trimmed standard error, or its program and exit status when
+        /// it wrote none.
+        reason: String,
+    },
 }
 
 /// A secret value sourced either from a literal in the TOML config
@@ -74,8 +78,9 @@ impl Secret {
     /// The command can take as long as the credential store behind it
     /// does, a locked `gpg-agent` being seconds rather than
     /// milliseconds, so the spawn is logged with the time it took. The
-    /// value is never logged, and neither are the arguments, a command
-    /// line being free to carry the secret itself.
+    /// value is never logged, and neither are the arguments. A failure
+    /// names the command as configured, for the user to run, never its
+    /// output.
     pub fn get(self) -> Result<SecretString, SecretError> {
         match self {
             Self::Raw(secret) => Ok(secret),
@@ -100,7 +105,7 @@ impl Secret {
                     // would leak it, and a lookup missing its entry
                     // (`secret-tool`, `security`) writes no error at all.
                     let stderr = String::from_utf8_lossy(&output.stderr);
-                    let err = match stderr.trim() {
+                    let reason = match stderr.trim() {
                         "" => {
                             let program = cmd.get_program().to_string_lossy();
                             format!("{program} failed with {}", output.status)
@@ -108,7 +113,10 @@ impl Secret {
                         err => err.to_owned(),
                     };
 
-                    return Err(SecretError::Output(err));
+                    return Err(SecretError::Output {
+                        command: config,
+                        reason,
+                    });
                 }
 
                 let secret = String::from_utf8_lossy(&output.stdout);
@@ -320,12 +328,14 @@ mod tests {
     fn a_failed_helper_never_exposes_its_stdout() {
         for (line, expected) in [
             (
-                "printf SECRET_MARKER; printf locked >&2; exit 7",
-                "Secret command error: locked",
+                "printf SECRET_%s MARKER; printf locked >&2; exit 7",
+                "Secret command error: locked, run `printf SECRET_%s MARKER; \
+                 printf locked >&2; exit 7` yourself to see why",
             ),
             (
-                "printf SECRET_MARKER; exit 7",
-                "Secret command error: /bin/sh failed with exit status: 7",
+                "printf SECRET_%s MARKER; exit 7",
+                "Secret command error: /bin/sh failed with exit status: 7, run \
+                 `printf SECRET_%s MARKER; exit 7` yourself to see why",
             ),
         ] {
             let err = shell(line).get().unwrap_err();
@@ -396,7 +406,36 @@ mod tests {
     #[test]
     fn a_failing_command_reports_its_stderr() {
         let err = shell("echo locked >&2; exit 1").get().unwrap_err();
-        assert_eq!(err.to_string(), "Secret command error: locked");
+        assert_eq!(
+            err.to_string(),
+            "Secret command error: locked, run `echo locked >&2; exit 1` \
+             yourself to see why"
+        );
+    }
+
+    #[test]
+    fn a_failing_command_is_named_for_the_user_to_run() {
+        let err = shell("printf SECRET_MARKER; exit 1").get().unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Secret command error: /bin/sh failed with exit status: 1, run \
+             `printf SECRET_MARKER; exit 1` yourself to see why"
+        );
+
+        let err = Secret::Command(CommandConfig::Argv {
+            program: String::from("sh"),
+            args: vec![
+                String::from("-c"),
+                String::from("echo \"it's locked\" >&2; exit 1"),
+            ],
+        })
+        .get()
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Secret command error: it's locked, run \
+             `sh -c 'echo \"it'\\''s locked\" >&2; exit 1'` yourself to see why"
+        );
     }
 
     /// The two shapes are two commands, whatever they end up running:

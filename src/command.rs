@@ -38,7 +38,7 @@
 //! [`shell`] is written as its bare command line, and any other as the
 //! program + args sequence.
 
-use std::{fmt, process::Command, time::Duration};
+use std::{fmt, iter, process::Command, time::Duration};
 
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
@@ -111,6 +111,34 @@ impl Serialize for CommandConfig {
                 seq.end()
             }
         }
+    }
+}
+
+/// Writes the command as a user would type it: a shell line as written,
+/// a program and its arguments joined by spaces, each quoted for a POSIX
+/// shell when it needs to be.
+impl fmt::Display for CommandConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (program, args) = match self {
+            Self::Shell(line) => return f.write_str(line),
+            Self::Argv { program, args } => (program, args),
+        };
+
+        for (i, word) in iter::once(program).chain(args).enumerate() {
+            if i > 0 {
+                f.write_str(" ")?;
+            }
+
+            let plain = |c: char| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c);
+
+            if !word.is_empty() && word.chars().all(plain) {
+                f.write_str(word)?;
+            } else {
+                write!(f, "'{}'", word.replace('\'', r"'\''"))?;
+            }
+        }
+
+        Ok(())
     }
 }
 
