@@ -207,6 +207,9 @@ impl NotificationTemplate {
     /// `lookup` answers a name's value, an empty one for a name it knows
     /// but cannot fill, and `None` for a name it does not know, which
     /// fails the render.
+    ///
+    /// A value, never the template's own text, loses its control
+    /// characters and, where the daemon reads markup, has it escaped.
     #[cfg(feature = "notify")]
     pub fn render(
         &self,
@@ -398,13 +401,39 @@ fn expand(
 
                 match default {
                     Some(default) if value.is_empty() => out.push_str(default),
-                    _ => out.push_str(&value),
+                    _ => push_value(&mut out, &value),
                 }
             }
         }
     }
 
     Ok(out)
+}
+
+/// Whether the platform's notification daemon reads Pango markup, as the
+/// XDG specification lets it, in the body and, through its format, in the
+/// summary.
+#[cfg(feature = "notify")]
+const MARKUP: bool = cfg!(all(unix, not(target_os = "macos")));
+
+/// Appends a value a lookup answered, escaped where the daemon reads
+/// markup, a line break or a tab read as a space, and other control and
+/// bidirectional override characters dropped.
+#[cfg(feature = "notify")]
+fn push_value(out: &mut String, value: &str) {
+    for c in value.chars() {
+        match c {
+            '\n' | '\r' | '\t' => out.push(' '),
+            '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => {}
+            c if c.is_control() => {}
+            '&' if MARKUP => out.push_str("&amp;"),
+            '<' if MARKUP => out.push_str("&lt;"),
+            '>' if MARKUP => out.push_str("&gt;"),
+            '"' if MARKUP => out.push_str("&quot;"),
+            '\'' if MARKUP => out.push_str("&apos;"),
+            c => out.push(c),
+        }
+    }
 }
 
 // NOTE: the shapes under test are TOML ones, so the tests need the
@@ -596,5 +625,48 @@ mod tests {
             template.check(|name| ["id", "collection", "mailbox"].contains(&name)),
             Ok(())
         );
+    }
+
+    #[cfg(all(feature = "notify", unix, not(target_os = "macos")))]
+    #[test]
+    fn a_value_is_escaped_and_the_template_kept() {
+        let template = NotificationTemplate::new("<b>$sender</b> & co", "${subject:-<i>none</i>}")
+            .expect("build the template");
+
+        let lookup = |subject: &'static str| {
+            move |name: &str| match name {
+                "sender" => Some(String::from("Al & \"Bo\" <a@b.c> 'x'")),
+                "subject" => Some(String::from(subject)),
+                _ => None,
+            }
+        };
+
+        let notification = template.render(lookup("")).expect("render");
+        assert_eq!(
+            notification.summary,
+            "<b>Al &amp; &quot;Bo&quot; &lt;a@b.c&gt; &apos;x&apos;</b> & co"
+        );
+        assert_eq!(notification.body, "<i>none</i>");
+
+        let link = "<a href=\"https://example.org\">Open invoice</a>";
+        let notification = template.render(lookup(link)).expect("render");
+        assert_eq!(
+            notification.body,
+            "&lt;a href=&quot;https://example.org&quot;&gt;Open invoice&lt;/a&gt;"
+        );
+    }
+
+    #[cfg(feature = "notify")]
+    #[test]
+    fn a_value_loses_its_control_characters() {
+        let template = NotificationTemplate::new("[$subject]\tx", "line\n$subject")
+            .expect("build the template");
+        let subject = "a\nb\r\tc\u{1b}[31md\u{7f}e\u{202e}f\u{2066}g";
+        let notification = template
+            .render(|_| Some(String::from(subject)))
+            .expect("render");
+
+        assert_eq!(notification.summary, "[a b  c[31mdefg]\tx");
+        assert_eq!(notification.body, "line\na b  c[31mdefg");
     }
 }

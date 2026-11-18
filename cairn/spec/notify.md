@@ -49,3 +49,16 @@ The `notify` module reads desktop notifications from a configuration: `Notificat
 
 ### Requirement: No consumer needs a cfg
 `NotificationTemplate::new`, `render`, `check`, `summary` and `body` SHALL exist in every build, and in a build without the `notify` feature `render` SHALL fail naming the feature.
+
+### Requirement: A value is text, never markup
+`render` SHALL write a value its lookup answers as text: a line break (`\n`, `\r`) or a tab as a space, every other control character and every bidirectional embedding, override and isolate (U+202A to U+202E, U+2066 to U+2069) dropped, and, on the platforms whose daemon reads the XDG notification markup (Unix but macOS), `&`, `<`, `>`, `"` and `'` written as `&amp;`, `&lt;`, `&gt;`, `&quot;` and `&apos;`, in the summary as in the body, a daemon's format being free to read markup in either. The template's own text and a `${name:-default}` default SHALL be written as they are, so a template may hold markup of its own.
+
+#### Scenario: A subject holding a link
+- **GIVEN** the template `body = "<b>$subject</b>"`
+- **WHEN** it renders on Linux with `subject` = `<a href="https://example.org">Open invoice</a>`
+- **THEN** the body reads `<b>&lt;a href=&quot;https://example.org&quot;&gt;Open invoice&lt;/a&gt;</b>`, which a daemon shows as bold text, never as a link
+
+#### Scenario: A subject holding a line break
+- **GIVEN** the template `summary = "[$subject]"`
+- **WHEN** it renders with `subject` = `a`, a line break, then `b`
+- **THEN** the summary reads `[a b]`

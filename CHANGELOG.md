@@ -16,6 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
   They read "TOML parse error at line {line}, column {column}: {message}", or "TOML parse error: {message}" when merged files lose the position.
 
+- Fixed `notify::NotificationTemplate::render` writing a value into a notification as markup.
+
+  A value has `&`, `<`, `>`, `"` and `'` escaped where the daemon reads markup (XDG platforms), a line break or a tab turned into a space, and other control and bidirectional override characters dropped; the template's own text is kept as written.
+
 ## [0.5.2] - 2026-11-15
 
 ### Fixed
