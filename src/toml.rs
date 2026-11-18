@@ -109,7 +109,8 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
     /// deep-merged on top of the ones before
     ///
     /// Returns an error if a configuration file cannot be read or if
-    /// a content cannot be parsed. An unknown key lists no key its table
+    /// a content cannot be parsed. An error shows its position and message,
+    /// never the source line, and an unknown key lists no key its table
     /// refuses as removed.
     fn from_paths(paths: &[PathBuf]) -> Result<Self> {
         match paths.len() {
@@ -119,14 +120,17 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
             1 => {
                 let path = &paths[0];
                 let content = read_config(path)?;
-                let config = unlisted(toml::from_str(&content), || toml::from_str(&content).ok());
+                let doc = || toml::from_str(&content).ok();
+                let config = unlisted(toml::from_str(&content), Some(&content), doc);
 
                 config.with_context(|| format!("Parse TOML config `{}` error", path.display()))
             }
             _ => {
                 let base = read_config(&paths[0])?;
-                let mut merged_content: Value = toml::from_str(&base)
-                    .with_context(|| format!("Parse TOML config `{}` error", paths[0].display()))?;
+                let mut merged_content: Value =
+                    unlisted(toml::from_str(&base), Some(&base), || None).with_context(|| {
+                        format!("Parse TOML config `{}` error", paths[0].display())
+                    })?;
 
                 for path in &paths[1..] {
                     let content = match fs::read_to_string(path) {
@@ -137,14 +141,16 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
                         }
                     };
 
-                    let content: Value = toml::from_str(&content)
-                        .with_context(|| format!("Parse TOML config `{}` error", path.display()))?;
+                    let content: Value =
+                        unlisted(toml::from_str(&content), Some(&content), || None).with_context(
+                            || format!("Parse TOML config `{}` error", path.display()),
+                        )?;
                     merged_content = merge_toml(merged_content, content, "$")?;
                 }
 
                 let config = Self::deserialize(merged_content.clone());
 
-                unlisted(config, || Some(merged_content)).context("Parse TOML config error")
+                unlisted(config, None, || Some(merged_content)).context("Parse TOML config error")
             }
         }
     }
@@ -463,30 +469,49 @@ impl fmt::Display for UnknownKey<'_> {
     }
 }
 
-/// A TOML error whose message lists no removed key, shown where the TOML
-/// error showed it.
+/// A TOML error shown by its position and message, never by the source
+/// line it points to, which may hold a secret.
 #[derive(Debug)]
-struct Unlisted {
-    err: TomlError,
+struct ParseError {
+    /// The line and the column, from 1, when the error points into a source.
+    at: Option<(usize, usize)>,
     message: String,
 }
 
-impl fmt::Display for Unlisted {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let shown = self.err.to_string();
-        let old = self.err.message();
+impl ParseError {
+    /// Takes the position of `err` in `source`, and its message.
+    fn new(err: &TomlError, source: Option<&str>) -> Self {
+        let start = err.span().map(|span| span.start);
+        let before = source
+            .zip(start)
+            .and_then(|(source, start)| source.get(..start));
 
-        match shown.rfind(old) {
-            Some(at) => {
-                let (before, after) = (&shown[..at], &shown[at + old.len()..]);
-                write!(f, "{before}{}{after}", self.message)
-            }
-            None => f.write_str(&self.message),
+        let at = before.map(|before| {
+            let line_start = before.rfind('\n').map_or(0, |at| at + 1);
+            let line = before.matches('\n').count() + 1;
+            let column = before[line_start..].chars().count() + 1;
+            (line, column)
+        });
+
+        let message = err.message().to_owned();
+        Self { at, message }
+    }
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.at {
+            Some((line, column)) => write!(
+                f,
+                "TOML parse error at line {line}, column {column}: {}",
+                self.message
+            ),
+            None => write!(f, "TOML parse error: {}", self.message),
         }
     }
 }
 
-impl error::Error for Unlisted {}
+impl error::Error for ParseError {}
 
 /// One step down a document, to a table's key or to an array's item.
 #[derive(Clone, Copy)]
@@ -606,10 +631,11 @@ fn sorted<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
     names
 }
 
-/// Answers `result`, an unknown-key error listing no key its table refuses
-/// as removed, the tables found in `doc`.
+/// Answers `result`, its error placed in `source` and, for an unknown key,
+/// listing no key its table refuses as removed, the tables found in `doc`.
 fn unlisted<T: for<'de> Deserialize<'de>>(
     result: Result<T, TomlError>,
+    source: Option<&str>,
     doc: impl FnOnce() -> Option<Value>,
 ) -> Result<T> {
     let err = match result {
@@ -617,15 +643,18 @@ fn unlisted<T: for<'de> Deserialize<'de>>(
         Err(err) => err,
     };
 
-    let message = UnknownKey::parse(err.message()).and_then(|unknown| {
+    let mut parse = ParseError::new(&err, source);
+
+    let unknown = UnknownKey::parse(err.message()).and_then(|unknown| {
         let doc = doc()?;
         unknown.without_removed::<T>(&doc)
     });
 
-    match message {
-        Some(message) => Err(Unlisted { err, message }.into()),
-        None => Err(err.into()),
+    if let Some(message) = unknown {
+        parse.message = message;
     }
+
+    Err(parse.into())
 }
 
 /// Collects the path to every table of `value` holding `key`.
@@ -1337,11 +1366,8 @@ mod tests {
 
         assert_eq!(
             family_error("unlisted", &[toml]),
-            "TOML parse error at line 2, column 1\n  \
-             |\n\
-             2 | host = \"x\"\n  \
-             | ^^^^\n\
-             unknown field `host`, expected `default` or `imap`\n",
+            "TOML parse error at line 2, column 1: unknown field `host`, \
+             expected `default` or `imap`",
         );
     }
 
@@ -1352,13 +1378,13 @@ mod tests {
         let err = family_error("elsewhere", &[toml]);
 
         assert!(
-            err.ends_with("\nunknown field `port`, expected `host` or `mailbox`\n"),
+            err.ends_with(": unknown field `port`, expected `host` or `mailbox`"),
             "{err}",
         );
     }
 
     /// Several layers are merged before they are read, which loses the
-    /// location.
+    /// position.
     #[test]
     fn an_unknown_key_in_a_layer_lists_no_removed_one() {
         let base = "[accounts.a]\ndefault = true\n";
@@ -1366,7 +1392,7 @@ mod tests {
         let err = family_error("unlisted-layers", &[base, layer]);
 
         assert!(
-            err.starts_with("unknown field `host`, expected `default` or `imap`\n"),
+            err == "TOML parse error: unknown field `host`, expected `default` or `imap`",
             "{err}",
         );
     }
@@ -1399,7 +1425,7 @@ mod tests {
 
     fn unlisted_message<T: for<'de> Deserialize<'de>>(toml: &str) -> String {
         let doc = toml::from_str(toml).ok();
-        let config = unlisted::<T>(toml::from_str(toml), || doc);
+        let config = unlisted::<T>(toml::from_str(toml), Some(toml), || doc);
 
         config.err().expect("refuse the unknown key").to_string()
     }
@@ -1408,18 +1434,103 @@ mod tests {
     fn the_keys_left_are_listed_as_serde_lists_them() {
         let one = unlisted_message::<Lone>("x = 1\n");
         assert!(
-            one.ends_with("\nunknown field `x`, expected `kept`\n"),
+            one.ends_with(": unknown field `x`, expected `kept`"),
             "{one}"
         );
 
         let several = unlisted_message::<Several>("x = 1\n");
-        let listed = "\nunknown field `x`, expected one of `a`, `b`, `c`\n";
+        let listed = ": unknown field `x`, expected one of `a`, `b`, `c`";
         assert!(several.ends_with(listed), "{several}");
 
         let none = unlisted_message::<Bare>("x = 1\n");
         assert!(
-            none.ends_with("\nunknown field `x`, there are no fields\n"),
+            none.ends_with(": unknown field `x`, there are no fields"),
             "{none}"
+        );
+    }
+
+    /// A configuration holding one secret.
+    #[cfg(feature = "secret")]
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Vault {
+        password: Option<crate::secret::Secret>,
+        host: Option<String>,
+    }
+
+    #[cfg(feature = "secret")]
+    impl TomlConfig for Vault {
+        type Account = ();
+
+        fn project_name() -> &'static str {
+            "test"
+        }
+
+        fn sample_url() -> &'static str {
+            SAMPLE_URL
+        }
+
+        fn accounts(&self) -> impl Iterator<Item = (&str, bool)> {
+            iter::empty()
+        }
+
+        fn take_named_account(&mut self, _name: &str) -> Option<(String, Self::Account)> {
+            None
+        }
+    }
+
+    /// Everything loading `layers` as [`Vault`] fails with, the whole
+    /// chain in both its forms.
+    #[cfg(feature = "secret")]
+    fn vault_error(name: &str, layers: &[&str]) -> String {
+        let dir = scratch_dir(name);
+        let mut paths = Vec::new();
+
+        for (i, layer) in layers.iter().enumerate() {
+            let path = dir.join(format!("{i}.toml"));
+            fs::write(&path, layer).unwrap();
+            paths.push(path);
+        }
+
+        let err = Vault::from_paths(&paths).expect_err("refuse the secret");
+        fs::remove_dir_all(dir).unwrap();
+        format!("{err:#}\n{err:?}")
+    }
+
+    #[cfg(feature = "secret")]
+    #[test]
+    fn a_bare_secret_is_never_echoed() {
+        let bare = "password = \"FAKE-hunter2\"\n";
+
+        for (name, layers) in [("bare", &[bare][..]), ("bare-layers", &["", bare])] {
+            let err = vault_error(name, layers);
+
+            assert!(!err.contains("FAKE-hunter2"), "{err}");
+            assert!(err.contains("a secret is a table: `raw` for a literal value, `command` for a command printing it"), "{err}");
+        }
+    }
+
+    #[cfg(feature = "secret")]
+    #[test]
+    fn a_parse_error_shows_its_position_never_its_line() {
+        let open = "host = \"x\"\npassword.raw = \"FAKE-hunter2\n";
+
+        for (name, layers) in [("open", &[open][..]), ("open-layers", &["", open])] {
+            let err = vault_error(name, layers);
+
+            assert!(!err.contains("FAKE-hunter2"), "{err}");
+            assert!(err.contains("at line 2, column "), "{err}");
+        }
+
+        let err = vault_error("position", &["host = \"x\"\nport = \"FAKE-hunter2\"\n"]);
+        assert_eq!(
+            err.lines().next().unwrap(),
+            "Parse TOML config `/tmp/pimalaya-config-PID/position/0.toml` error: \
+             TOML parse error at line 2, column 1: unknown field `port`, \
+             expected `password` or `host`"
+                .replace("/tmp", &env::temp_dir().to_string_lossy())
+                .replace("PID", &process::id().to_string()),
         );
     }
 }

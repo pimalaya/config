@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed a refused `Secret` echoing its value.
+
+  A bare value where a table belongs fails with "a secret is a table: `raw` for a literal value, `command` for a command printing it", a `raw` holding no string with "a secret's `raw` is a string".
+
+- Fixed `toml::TomlConfig` parse errors printing the source line, which may hold a secret.
+
+  They read "TOML parse error at line {line}, column {column}: {message}", or "TOML parse error: {message}" when merged files lose the position.
+
 ## [0.5.2] - 2026-11-15
 
 ### Fixed

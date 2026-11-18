@@ -28,3 +28,11 @@ A secret command exiting with a non-zero status SHALL fail with its trimmed stan
 - **GIVEN** a caller reading a message or a JSON-RPC stream on its standard input from a pipe
 - **WHEN** a secret command is resolved
 - **THEN** the command reads an empty standard input, and the piped bytes stay with the caller
+
+### Requirement: A refused secret never echoes its value
+`Secret` SHALL deserialize from a table holding one key: `raw`, a string, the literal value, or `command`, `cmd` its alias, a command. A value of another type where the table belongs, a bare string, a number or a boolean among them, SHALL be refused with "a secret is a table: `raw` for a literal value, `command` for a command printing it", an empty table likewise; a `raw` holding no string with "a secret's `raw` is a string"; another key with "unknown variant `{key}`, expected `raw` or `command`"; both keys with "a secret holds one of `raw` or `command`, not both". No refusal SHALL hold the value written.
+
+#### Scenario: A literal written without `raw`
+- **GIVEN** `password = "hunter2"`
+- **WHEN** it is read as a `Secret`
+- **THEN** reading fails with "a secret is a table: `raw` for a literal value, `command` for a command printing it", which holds no part of `hunter2`

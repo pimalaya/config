@@ -13,6 +13,7 @@
 
 use std::{
     collections::HashMap,
+    fmt,
     io::{self, IsTerminal},
     process::Stdio,
     time::Instant,
@@ -20,7 +21,10 @@ use std::{
 
 use log::{debug, trace};
 use secrecy::{ExposeSecret, SecretString};
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{self, Error as _, MapAccess, Visitor},
+};
 use thiserror::Error;
 
 use crate::command::CommandConfig;
@@ -49,13 +53,14 @@ pub enum SecretError {
 /// caches nothing: a caller resolving the same command twice spawns it
 /// twice, which is what [`SecretResolver`] exists to avoid. See
 /// [`crate::command`] for the TOML shapes the `Command` variant accepts.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+///
+/// It reads from a table holding `raw` or `command`, `cmd` its alias.
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Secret {
     /// A literal secret value read straight from the config.
     Raw(#[serde(serialize_with = "de")] SecretString),
     /// A command whose standard output is the secret value.
-    #[serde(alias = "cmd")]
     Command(CommandConfig),
 }
 
@@ -118,6 +123,16 @@ impl Secret {
     }
 }
 
+/// Reads a table holding `raw` or `command`, `cmd` its alias.
+///
+/// A refusal never echoes the value: a bare string, the natural mistake
+/// for a literal, would be the secret itself.
+impl<'de> Deserialize<'de> for Secret {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_map(SecretVisitor)
+    }
+}
+
 /// Resolves secrets while memoizing the commands it spawns.
 ///
 /// A configuration usually points several fields at one credential: an
@@ -173,6 +188,112 @@ impl SecretResolver {
 /// trips back to the literal it came from.
 pub fn de<S: Serializer>(secret: &SecretString, serializer: S) -> Result<S::Ok, S::Error> {
     secret.expose_secret().serialize(serializer)
+}
+
+/// The refusal of a secret written as a bare value.
+const BARE: &str =
+    "a secret is a table: `raw` for a literal value, `command` for a command printing it";
+
+/// The refusal of a `raw` secret holding no string.
+const RAW_NOT_STRING: &str = "a secret's `raw` is a string";
+
+/// The keys a secret table reads, as an unknown one is told.
+const KEYS: &[&str] = &["raw", "command"];
+
+/// Visits a [`Secret`], refusing anything but a table with [`BARE`].
+struct SecretVisitor;
+
+impl<'de> Visitor<'de> for SecretVisitor {
+    type Value = Secret;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("a table holding `raw` or `command`")
+    }
+
+    fn visit_bool<E: de::Error>(self, _: bool) -> Result<Secret, E> {
+        Err(E::custom(BARE))
+    }
+
+    fn visit_i64<E: de::Error>(self, _: i64) -> Result<Secret, E> {
+        Err(E::custom(BARE))
+    }
+
+    fn visit_u64<E: de::Error>(self, _: u64) -> Result<Secret, E> {
+        Err(E::custom(BARE))
+    }
+
+    fn visit_f64<E: de::Error>(self, _: f64) -> Result<Secret, E> {
+        Err(E::custom(BARE))
+    }
+
+    fn visit_str<E: de::Error>(self, _: &str) -> Result<Secret, E> {
+        Err(E::custom(BARE))
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Secret, A::Error> {
+        let Some(key) = map.next_key::<String>()? else {
+            return Err(A::Error::custom(BARE));
+        };
+
+        let secret = match key.as_str() {
+            "raw" => Secret::Raw(map.next_value::<RawSecret>()?.0.into()),
+            "command" | "cmd" => Secret::Command(map.next_value()?),
+            key => return Err(A::Error::unknown_variant(key, KEYS)),
+        };
+
+        if map.next_key::<String>()?.is_some() {
+            return Err(A::Error::custom(
+                "a secret holds one of `raw` or `command`, not both",
+            ));
+        }
+
+        Ok(secret)
+    }
+}
+
+/// The value of a `raw` secret, refused with [`RAW_NOT_STRING`] when it
+/// is no string.
+struct RawSecret(String);
+
+impl<'de> Deserialize<'de> for RawSecret {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_string(RawSecretVisitor)
+    }
+}
+
+/// Visits a [`RawSecret`].
+struct RawSecretVisitor;
+
+impl Visitor<'_> for RawSecretVisitor {
+    type Value = RawSecret;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("a string")
+    }
+
+    fn visit_bool<E: de::Error>(self, _: bool) -> Result<RawSecret, E> {
+        Err(E::custom(RAW_NOT_STRING))
+    }
+
+    fn visit_i64<E: de::Error>(self, _: i64) -> Result<RawSecret, E> {
+        Err(E::custom(RAW_NOT_STRING))
+    }
+
+    fn visit_u64<E: de::Error>(self, _: u64) -> Result<RawSecret, E> {
+        Err(E::custom(RAW_NOT_STRING))
+    }
+
+    fn visit_f64<E: de::Error>(self, _: f64) -> Result<RawSecret, E> {
+        Err(E::custom(RAW_NOT_STRING))
+    }
+
+    fn visit_str<E: de::Error>(self, raw: &str) -> Result<RawSecret, E> {
+        Ok(RawSecret(raw.to_owned()))
+    }
+
+    fn visit_string<E: de::Error>(self, raw: String) -> Result<RawSecret, E> {
+        Ok(RawSecret(raw))
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -303,7 +424,7 @@ mod tests {
         fs::remove_file(&path).unwrap();
     }
 
-    #[derive(Deserialize, Serialize)]
+    #[derive(Debug, Deserialize, Serialize)]
     struct Account {
         password: Secret,
     }
@@ -323,5 +444,36 @@ mod tests {
             let rewritten = toml::to_string(&account).unwrap();
             assert_eq!(rewritten.trim(), "[password]\ncommand = \"pass show mail\"");
         }
+    }
+
+    #[test]
+    fn a_refused_secret_never_echoes_its_value() {
+        let bare =
+            "a secret is a table: `raw` for a literal value, `command` for a command printing it";
+
+        for (written, expected) in [
+            ("password = \"FAKE4242\"", bare),
+            ("password = 4242", bare),
+            ("password = true", bare),
+            ("password = {}", bare),
+            ("password.raw = 4242", "a secret's `raw` is a string"),
+            (
+                "password.lookup = \"FAKE4242\"",
+                "unknown variant `lookup`, expected `raw` or `command`",
+            ),
+            (
+                "password = { raw = \"FAKE4242\", command = \"x\" }",
+                "a secret holds one of `raw` or `command`, not both",
+            ),
+        ] {
+            let err = toml::from_str::<Account>(written).unwrap_err();
+            assert_eq!(err.message(), expected, "{written}");
+        }
+
+        let account: Account = toml::from_str("password = { raw = \"FAKE4242\" }").unwrap();
+        let Secret::Raw(raw) = account.password else {
+            panic!("no literal read");
+        };
+        assert_eq!(raw.expose_secret(), "FAKE4242");
     }
 }
