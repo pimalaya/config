@@ -6,7 +6,7 @@ status: current
 
 # TOML
 
-The `toml` feature reads a product's TOML configuration: its default paths, the layering of several files, a missing configuration, a parse error shown by its position, the account a command runs against, the deserializers expanding the shell syntax in a string or a path, and the sentence refusing a key a release removed, which an unknown key's error leaves out of the keys it lists.
+The `toml` feature reads a product's TOML configuration: its default paths, the layering of several files, a missing configuration, a parse error shown by its position, the account a command runs against, the deserializers expanding the shell syntax in a string or a path, and the sentence refusing a key a release removed, which an unknown key's error leaves out of the keys it lists. It also writes down the keys of the TLS table every binary repeats, which it does not read itself.
 
 ### Requirement: Shell-expanded strings
 `shell_expanded_string`, `shell_expanded_path` and `opt_shell_expanded_path` SHALL expand environment variables (`$name`, `${name}`) and a leading tilde, the tilde to the home directory dirs reports. A home directory that is not valid Unicode SHALL leave the tilde as written, and an undefined variable SHALL leave the whole value as written rather than fail.
@@ -88,3 +88,16 @@ When `TomlConfig::from_paths` fails to parse a file, the error SHALL be the file
 - **GIVEN** a single file whose second line is `password.raw = "hunter2`
 - **WHEN** the configuration is loaded
 - **THEN** loading fails with "TOML parse error at line 2, column 24: invalid basic string, expected `"`", which holds no part of `hunter2`
+
+### Requirement: Every binary spells its TLS table alike
+A binary reaching a server over TLS SHALL read a `tls` table of its own type, repeated in each binary rather than shared from this crate (serde's `flatten` cannot mix with `deny_unknown_fields`), and SHALL spell it with these keys, each optional: `provider`, `rustls` or `native-tls`, the build's first when unset; `rustls.crypto`, `aws` or `ring`, the build's first when unset; `cert`, the path of a PEM certificate trusted beside the platform's; `client.cert` and `client.key`, the paths of a PEM client certificate and of its PEM private key (PKCS#8 under native-tls), both required once `client` is given. Paths SHALL be shell-expanded as `shell_expanded_path` expands them. An account SHALL take the table at `tls` and each of its network backends at `<backend>.tls`, the backend's table taking from the account's, field by field, each of `provider`, `rustls.crypto`, `cert` and `client` it leaves unset, `client` as one so a certificate is never paired with another table's key. A key the table does not read SHALL be refused by serde's `deny_unknown_fields` alone, at every level of the table, never by name. A binary MAY read more keys in its table, but SHALL NOT rename, move or retype these. pimalaya-config reads no TLS table: this requirement is where the keys are written once, and the binaries' configuration dumps are checked against it.
+
+#### Scenario: A backend table over the account's
+- **GIVEN** an account holding `tls.provider = "native-tls"` and `tls.cert = "~/ca.pem"`, and its `imap.tls.cert = "~/imap.pem"`
+- **WHEN** the IMAP connection is configured
+- **THEN** it runs native-tls trusting the home directory's `imap.pem`, and every other network backend of the account native-tls trusting `ca.pem`
+
+#### Scenario: A misspelled key
+- **GIVEN** an account holding `tls.rustls.cypto = "ring"`
+- **WHEN** the configuration is loaded
+- **THEN** loading fails with serde's "unknown field `cypto`, expected `crypto`"

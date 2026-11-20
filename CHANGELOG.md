@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Added to the toml spec the keys of the TLS table every binary repeats: `tls.provider`, `tls.rustls.crypto`, `tls.cert`, `tls.client.cert`, `tls.client.key`, the account's `tls` inherited field by field by each `<backend>.tls`, an unknown key refused by serde alone.
+
 ## [0.6.0] - 2026-11-18
 
 ### Added
